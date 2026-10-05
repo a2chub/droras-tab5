@@ -1,0 +1,51 @@
+# ===== Secrets: never commit =====
+# Wi-Fi SSIDs and passwords (copy src/app_secrets.example.h and fill it in)
+src/app_secrets.h
+# Generic credential files, in case one is ever dropped into this folder. The droras
+# server's Firestore service-account key (jdl-main-key.json) is the likeliest candidate.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*-key.json
+*service-account*.json
+*credentials*.json
+
+# ===== Device images =====
+# Dumps read back from a device contain its NVS partition, i.e. stored Wi-Fi credentials
+# once the device has been used. The 16MB factory backup lives here too.
+firmware_backup/
+*.bin
+*.elf
+*.map
+*.uf2
+
+# ===== Build output and downloaded dependencies =====
+.pio/
+build/
+# Fetched by the ESP-IDF component manager (versions are pinned in dependencies.lock)
+managed_components/
+# Generated from sdkconfig.defaults on each configure
+sdkconfig
+sdkconfig.old
+sdkconfig.tab5
+sdkconfig.*.old
+
+# ===== Local tool state =====
+# gstack browse daemon: holds session tokens and browsing logs
+.gstack/
+.claude/
+.vscode/
+.idea/
+*.swp
+*~
+
+# ===== OS and language noise =====
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.log
