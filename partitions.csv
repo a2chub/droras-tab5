@@ -1,0 +1,6 @@
+# 16MB flash. The app takes nearly all of it: the embedded TrueType font alone is 6MB,
+# on top of Wi-Fi/TLS/FreeType. There is no room left for an OTA slot; updates go over USB.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xf000,   0x1000
+factory,  app,  factory, 0x10000,  0xF00000

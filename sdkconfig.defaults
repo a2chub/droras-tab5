@@ -1,0 +1,33 @@
+# This Tab5 carries an ESP32-P4 rev v1.3. ESP-IDF 5.5 targets rev >= 3.0 by default,
+# and such a binary does not boot on rev 1.x silicon.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+
+# 16MB QIO flash
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Must match board_build.partitions in platformio.ini (that one decides what is flashed).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# 32MB PSRAM holds the 1280x720 framebuffer. 200MHz needs the experimental flag.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_SPEED_200M=y
+
+# The USB-C port is wired to the P4's USB-Serial/JTAG, not to UART0.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# The UI runs on the main task, and FreeType's anti-aliasing rasteriser alone keeps a 16KB
+# work buffer on the stack.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+CONFIG_FREERTOS_HZ=1000
+
+# Wi-Fi: the ESP32-P4 has no radio and talks to the on-board ESP32-C6 through esp_hosted.
+# The Tab5 preset selects the SDIO pins (CLK12/CMD13/D0-3=11,10,9,8) and reset on GPIO15.
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP32P4_TAB5_C6_BOARD=y
+# The preset also defaults the reset polarity to "active low", which leaves GPIO15 low
+# after the reset pulse. On this board that holds the C6 in reset: SDIO enumeration then
+# times out (sdmmc send_op_cond 0x107). "Active high" (pulse low, idle high) works.
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
