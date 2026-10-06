@@ -90,6 +90,43 @@ $PY tools/screenshot.py out.png --send "imu"          # 加速度と向きの判
   上下逆さで X ≈ +1g、平置きで Z ≈ -1g（実測）。`screen_orientation.cpp` の `downAxisG()` がこれに依存する。
 - **メインタスクのスタック**: FreeType のラスタライザがスタック上に 16KB のバッファを取るため 32KB にしている。
 
+## リリースの保存と復元（いつでも前の版に戻す）
+
+安定した版は 3 段構えで残してあり、どれからでも再ビルドなしで戻せる。
+
+| 何を | どこに | 戻せるもの |
+|---|---|---|
+| ソース | git タグ `vX.Y.Z`（`origin` にも push 済み） | ソースコード。再ビルドして書き込む |
+| ビルド済みファーム | `firmware_backup/vX.Y.Z/`（bootloader / partitions / firmware の各 .bin と .elf、`SHA256SUMS`） | ファームだけ。本体の設定（NVS）はそのまま残る |
+| Flash 全域のダンプ | `firmware_backup/tab5_vX.Y.Z_full_16MB.bin` | ファームと設定を含む、保存した時点の完全な状態 |
+
+`firmware_backup/` は Wi-Fi のパスワードを含む NVS が入るため git 管理外。**このフォルダは別途バックアップすること。**
+
+```sh
+tools/restore_release.sh v1.0.0          # ファームだけ戻す（設定は残る）。約30秒
+tools/restore_release.sh v1.0.0 --full   # 設定ごと保存時点の状態に戻す。約4分
+```
+
+書き込み後は本体が再起動する。ソースから戻すなら `git switch --detach v1.0.0 && $PIO run -e tab5 -t upload`。
+
+### 新しい版を保存する手順
+
+1. 実機で動作を確認し、main にマージしてから `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
+2. ビルド成果物を保存:
+   ```sh
+   mkdir firmware_backup/vX.Y.Z
+   cp .pio/build/tab5/{bootloader,partitions,firmware}.bin .pio/build/tab5/firmware.elf firmware_backup/vX.Y.Z/
+   (cd firmware_backup/vX.Y.Z && shasum -a 256 *.bin > SHA256SUMS)
+   ```
+3. Flash 全域を退避: `uvx esptool --port /dev/cu.usbmodemXXXX --baud 921600 read-flash 0 0x1000000 firmware_backup/tab5_vX.Y.Z_full_16MB.bin`
+4. ここ（下の一覧）に SHA-256 を記録する
+
+### 保存済みの版
+
+| 版 | 内容 | コミット | 全域ダンプの SHA-256 |
+|---|---|---|---|
+| v1.0.0 | ヒート表、設定（Wi-Fi / サーバー / 音量・明るさ / 画面の向き）。カメラ対応前 | `ed9377e` | `cc02e866f5436f318e88e2a015a346604696538fe8f2ad4107b400dba85b7c9b` |
+
 ## 工場出荷ファームウェアの復元
 
 書き込み前に Flash 全域（16MB）を `firmware_backup/tab5_factory_16MB.bin` に退避してある
