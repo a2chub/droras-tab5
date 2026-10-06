@@ -9,6 +9,7 @@ idf_component_register(
         "http_client.cpp"
         "main.cpp"
         "network_task.cpp"
+        "screen_orientation.cpp"
         "settings_screen.cpp"
         "settings_store.cpp"
         "text_renderer.cpp"

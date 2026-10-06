@@ -58,6 +58,7 @@ class BoardScreen {
   static constexpr int kPreparedTables = 3;
 
   void setUpPreparedTables();
+  void followOrientation();
   PreparedTable* findPrepared(const HeatListPtr& heats, int heatNumber);
   PreparedTable* preparedFor(const AppSnapshot& snapshot, int heatNumber);
   void drawNextRow(PreparedTable& table);

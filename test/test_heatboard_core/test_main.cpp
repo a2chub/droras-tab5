@@ -11,5 +11,6 @@ int main() {
   runHeatWindowTests();
   runSocketIoCodecTests();
   runServerAddressTests();
+  runOrientationTests();
   return UNITY_END();
 }

@@ -1,11 +1,13 @@
-// Settings screen with three tabs: Wi-Fi preset selection, Raspberry Pi server address
-// (numeric keypad, plus pilot list reload), and speaker volume / screen brightness.
+// Settings screen with four tabs: Wi-Fi preset selection, Raspberry Pi server address
+// (numeric keypad, plus pilot list reload), speaker volume / screen brightness, and screen
+// orientation (automatic from the accelerometer, or fixed by hand).
 #pragma once
 
 #include <cstdint>
 #include <string>
 
 #include "app_state.h"
+#include "heatboard/orientation.h"
 
 class SettingsScreen {
  public:
@@ -20,7 +22,7 @@ class SettingsScreen {
   Action handleTap(int x, int y, const AppSnapshot& snapshot);
 
  private:
-  enum class Tab { Wifi, Server, Device };
+  enum class Tab { Wifi, Server, Device, Orientation };
 
   void selectTab(Tab tab, const AppSnapshot& snapshot);
   void drawTabBar();
@@ -43,10 +45,17 @@ class SettingsScreen {
   void drawLevels();
   void handleDeviceTap(int x, int y);
 
+  void drawOrientationTab();
+  void drawOrientationButtons();
+  void drawOrientationInfo();
+  void handleOrientationTap(int x, int y);
+
   Tab tab_ = Tab::Wifi;
   std::string addressText_;
   std::string message_;
   bool messageIsError_ = false;
   uint32_t drawnRevision_ = 0;
   int drawnWifiSlot_ = -1;
+  heatboard::Orientation drawnSensed_ = heatboard::Orientation::Normal;
+  bool drawnUpsideDown_ = false;
 };

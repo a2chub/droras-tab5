@@ -3,26 +3,29 @@
 #include <cstdio>
 
 #include "heatboard/server_address.h"
+#include "screen_orientation.h"
 #include "settings_store.h"
 #include "ui_common.h"
 #include "wifi_station.h"
 
 namespace {
 
+using heatboard::Orientation;
+using heatboard::OrientationMode;
 using ui::Rect;
 
 // --- Layout (1280x720) ---------------------------------------------------------------
 constexpr Rect kBackButton = {1080, 12, 180, 64};
 constexpr int kTitleBarBottom = 88;
 
-constexpr int kTabCount = 3;
-constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ"};
-constexpr int kTabTop = 100;
-constexpr int kTabWidth = 380;
-constexpr int kTabHeight = 64;
-constexpr int kTabGap = 30;
-constexpr int kContentTop = kTabTop + kTabHeight + 8;
+constexpr int kTabCount = 4;
+constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き"};
 constexpr int kMargin = 40;
+constexpr int kTabTop = 100;
+constexpr int kTabGap = 20;
+constexpr int kTabWidth = (ui::kScreenWidth - 2 * kMargin - (kTabCount - 1) * kTabGap) / kTabCount;
+constexpr int kTabHeight = 64;
+constexpr int kContentTop = kTabTop + kTabHeight + 8;
 
 // Wi-Fi tab: one large button per preset.
 constexpr int kWifiButtonsTop = 224;
@@ -65,7 +68,26 @@ struct LevelControl {
 };
 constexpr LevelControl kVolumeControl = {"タッチ音の音量", 196};
 constexpr LevelControl kBrightnessControl = {"画面の明るさ", 400};
-constexpr Rect kDeviceMessageArea = {kMargin, 600, 1200, 36};
+// Shared by the volume / brightness and orientation tabs.
+constexpr Rect kBottomMessageArea = {kMargin, 600, 1200, 36};
+
+// Orientation tab: one large button per mode, in OrientationMode order.
+struct OrientationChoice {
+  OrientationMode mode;
+  const char* label;
+};
+constexpr OrientationChoice kOrientationChoices[] = {
+    {OrientationMode::Auto, "自動（センサー）"},
+    {OrientationMode::Normal, "通常の向き"},
+    {OrientationMode::UpsideDown, "上下反転"},
+};
+constexpr int kOrientationChoiceCount = sizeof(kOrientationChoices) / sizeof(kOrientationChoices[0]);
+constexpr int kOrientationButtonsTop = 236;
+constexpr int kOrientationButtonGap = 20;
+constexpr int kOrientationButtonWidth =
+    (ui::kScreenWidth - 2 * kMargin - (kOrientationChoiceCount - 1) * kOrientationButtonGap) / kOrientationChoiceCount;
+constexpr int kOrientationButtonHeight = 150;
+constexpr Rect kOrientationInfoArea = {kMargin, 420, 1200, 120};
 
 Rect tabRect(int index) { return {kMargin + index * (kTabWidth + kTabGap), kTabTop, kTabWidth, kTabHeight}; }
 
@@ -73,6 +95,15 @@ Rect wifiButtonRect(int slot) {
   return {kMargin + (slot % kWifiButtonColumns) * (kWifiButtonWidth + kWifiButtonGap),
           kWifiButtonsTop + (slot / kWifiButtonColumns) * (kWifiButtonHeight + kWifiButtonGap), kWifiButtonWidth,
           kWifiButtonHeight};
+}
+
+Rect orientationButtonRect(int index) {
+  return {kMargin + index * (kOrientationButtonWidth + kOrientationButtonGap), kOrientationButtonsTop,
+          kOrientationButtonWidth, kOrientationButtonHeight};
+}
+
+const char* orientationName(Orientation orientation) {
+  return orientation == Orientation::UpsideDown ? "上下反転" : "通常の向き";
 }
 
 Rect keyRect(int index) {
@@ -154,10 +185,17 @@ void SettingsScreen::drawTabContent(const AppSnapshot& snapshot) {
     case Tab::Wifi: drawWifiTab(snapshot); break;
     case Tab::Server: drawServerTab(snapshot); break;
     case Tab::Device: drawDeviceTab(); break;
+    case Tab::Orientation: drawOrientationTab(); break;
   }
 }
 
 void SettingsScreen::update(const AppSnapshot& snapshot) {
+  // Follows the sensor live, so that turning the Tab5 shows what Auto would do.
+  if (tab_ == Tab::Orientation &&
+      (screen_orientation::sensed() != drawnSensed_ || ui::upsideDown() != drawnUpsideDown_)) {
+    drawOrientationInfo();
+    presentContent();
+  }
   if (snapshot.revision == drawnRevision_) {
     return;
   }
@@ -192,6 +230,7 @@ SettingsScreen::Action SettingsScreen::handleTap(int x, int y, const AppSnapshot
     case Tab::Wifi: handleWifiTap(x, y, snapshot); break;
     case Tab::Server: handleServerTap(x, y); break;
     case Tab::Device: handleDeviceTap(x, y); break;
+    case Tab::Orientation: handleOrientationTap(x, y); break;
   }
   // The handlers redraw only small pieces of the tab; one copy covers whichever they touched.
   presentContent();
@@ -205,7 +244,7 @@ void SettingsScreen::showMessage(const char* text, bool isError) {
 }
 
 void SettingsScreen::drawMessage() {
-  const Rect& area = tab_ == Tab::Wifi ? kWifiMessageArea : tab_ == Tab::Server ? kServerMessageArea : kDeviceMessageArea;
+  const Rect& area = tab_ == Tab::Wifi ? kWifiMessageArea : tab_ == Tab::Server ? kServerMessageArea : kBottomMessageArea;
   ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
   ui::drawText(message_.c_str(), area.x, area.y + 4, 24, messageIsError_ ? ui::kColorRed : ui::kColorGreen);
 }
@@ -425,5 +464,67 @@ void SettingsScreen::handleDeviceTap(int x, int y) {
   drawLevels();
   if (!saved) {
     showMessage("設定を保存できませんでした（電源を切ると元に戻ります）", true);
+  }
+}
+
+// --- Orientation tab -------------------------------------------------------------------
+
+void SettingsScreen::drawOrientationTab() {
+  ui::drawText("自動にすると、Tab5を逆さに持ったときに表示も上下反転します", kMargin, kContentTop + 12, 24,
+               ui::kColorMutedText);
+  drawOrientationButtons();
+  drawOrientationInfo();
+}
+
+void SettingsScreen::drawOrientationButtons() {
+  for (int i = 0; i < kOrientationChoiceCount; ++i) {
+    const Rect area = orientationButtonRect(i);
+    const bool active = kOrientationChoices[i].mode == screen_orientation::mode();
+    // Cleared first: the corners would otherwise keep a fringe of the previous colour.
+    ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+    ui::drawButton(area, kOrientationChoices[i].label, active ? ui::kColorBlue : ui::kColorPanel,
+                   active ? ui::kColorOnAccent : ui::kColorText, 40);
+  }
+}
+
+void SettingsScreen::drawOrientationInfo() {
+  const Rect& area = kOrientationInfoArea;
+  ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+
+  const bool upsideDown = ui::upsideDown();
+  const Orientation sensed = screen_orientation::sensed();
+  char line[128];
+  snprintf(line, sizeof(line), "現在の表示: %s", orientationName(upsideDown ? Orientation::UpsideDown : Orientation::Normal));
+  ui::drawText(line, area.x, area.y, 28, ui::kColorText);
+  if (screen_orientation::sensorAvailable()) {
+    snprintf(line, sizeof(line), "加速度センサーの判定: %s（平らに置いている間は直前の判定のまま）",
+             orientationName(sensed));
+    ui::drawText(line, area.x, area.y + 48, 24, ui::kColorMutedText);
+  } else {
+    ui::drawText("加速度センサーが見つかりません（自動では通常の向きで表示します）", area.x, area.y + 48, 24,
+                 ui::kColorRed);
+  }
+  drawnSensed_ = sensed;
+  drawnUpsideDown_ = upsideDown;
+}
+
+void SettingsScreen::handleOrientationTap(int x, int y) {
+  for (int i = 0; i < kOrientationChoiceCount; ++i) {
+    if (!orientationButtonRect(i).contains(x, y)) {
+      continue;
+    }
+    const OrientationMode mode = kOrientationChoices[i].mode;
+    ui::beepAccepted();
+    if (mode == screen_orientation::mode()) {
+      return;
+    }
+    const bool saved = settings_store::saveOrientationMode(mode) == ESP_OK;
+    screen_orientation::setMode(mode);
+    drawOrientationButtons();
+    drawOrientationInfo();
+    if (!saved) {
+      showMessage("設定を保存できませんでした（電源を切ると元に戻ります）", true);
+    }
+    return;
   }
 }

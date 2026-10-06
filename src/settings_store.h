@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "esp_err.h"
+#include "heatboard/orientation.h"
 #include "heatboard/server_address.h"
 
 namespace settings_store {
@@ -27,5 +28,9 @@ std::optional<int> loadVolumeLevel();
 esp_err_t saveVolumeLevel(int level);
 std::optional<int> loadBrightnessLevel();
 esp_err_t saveBrightnessLevel(int level);
+
+// Screen orientation mode from the settings screen; nullopt if never chosen (or unusable).
+std::optional<heatboard::OrientationMode> loadOrientationMode();
+esp_err_t saveOrientationMode(heatboard::OrientationMode mode);
 
 }  // namespace settings_store

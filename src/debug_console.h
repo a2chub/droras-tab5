@@ -3,12 +3,13 @@
 //   key <1|2|3>   same shortcuts as the droras web UI (start/stop, previous, next)
 //   tap <x> <y>   inject a touch at screen coordinates
 //   shot          dump the framebuffer (decode with tools/screenshot.py)
+//   imu           log the accelerometer reading and the screen orientation decided from it
 #pragma once
 
 namespace debug_console {
 
 struct Command {
-  enum class Type { Key, Tap, Screenshot };
+  enum class Type { Key, Tap, Screenshot, Imu };
   Type type;
   char key;
   int x;

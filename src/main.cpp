@@ -8,6 +8,7 @@
 #include "board_screen.h"
 #include "debug_console.h"
 #include "network_task.h"
+#include "screen_orientation.h"
 #include "settings_screen.h"
 #include "settings_store.h"
 #include "text_renderer.h"
@@ -38,6 +39,7 @@ extern "C" void app_main(void) {
   settings_store::init();
   ui::setVolumeLevel(settings_store::loadVolumeLevel().value_or(ui::kDefaultVolumeLevel));
   ui::setBrightnessLevel(settings_store::loadBrightnessLevel().value_or(ui::kDefaultBrightnessLevel));
+  screen_orientation::init();
   debug_console::start();
   network_task::start();
 
@@ -48,6 +50,9 @@ extern "C" void app_main(void) {
   board.show(snapshot);
 
   while (true) {
+    // Before M5.update() reads the touch panel, so that a tap is mapped with the rotation
+    // of the screen it is handled on.
+    screen_orientation::update();
     M5.update();
     if (AppState::instance().revision() != snapshot.revision) {
       snapshot = AppState::instance().snapshot();
@@ -80,6 +85,9 @@ extern "C" void app_main(void) {
           break;
         case debug_console::Command::Type::Screenshot:
           debug_console::dumpScreenshot();
+          break;
+        case debug_console::Command::Type::Imu:
+          screen_orientation::logReading();
           break;
       }
     }

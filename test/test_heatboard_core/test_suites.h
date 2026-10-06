@@ -7,3 +7,4 @@ void runHeatListTests();
 void runHeatWindowTests();
 void runSocketIoCodecTests();
 void runServerAddressTests();
+void runOrientationTests();

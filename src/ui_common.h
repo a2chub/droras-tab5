@@ -52,6 +52,13 @@ Canvas& frame();
 void present(int top, int height);
 void presentAll();
 
+// Shows the UI the other way up (the Tab5 turned upside down) or back. Layout coordinates do
+// not change: the frame is turned in memory and the display rotation follows it, so touch
+// coordinates keep matching what is drawn. Everything is on the panel again on return.
+// Canvases other than the main frame are turned by their owners (see upsideDown()).
+void setUpsideDown(bool upsideDown);
+bool upsideDown();
+
 // While one of these is alive, frame() and every ui:: drawing helper draw on `canvas`
 // instead of the main frame. Used to prepare a region out of sight, ahead of time.
 class FrameScope {

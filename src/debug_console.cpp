@@ -38,6 +38,10 @@ bool parseLine(const char* line, Command& command) {
     command = {Command::Type::Screenshot, 0, 0, 0};
     return true;
   }
+  if (strcmp(line, "imu") == 0) {
+    command = {Command::Type::Imu, 0, 0, 0};
+    return true;
+  }
   return false;
 }
 

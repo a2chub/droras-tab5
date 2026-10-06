@@ -226,6 +226,7 @@ void BoardScreen::show(const AppSnapshot& snapshot) {
   if (!preparedSetUp_) {
     setUpPreparedTables();
   }
+  followOrientation();
   ui::frame().fillScreen(ui::kColorBackground);
   drawTableHeader();
   drawStatusBar(snapshot);
@@ -237,6 +238,7 @@ void BoardScreen::show(const AppSnapshot& snapshot) {
 }
 
 void BoardScreen::update(const AppSnapshot& snapshot) {
+  followOrientation();
   if (timerRunning_) {
     const int elapsed = static_cast<int>((nowMs() - timerStartMs_) / 1000);
     if (elapsed > app_config::kRaceTimerSeconds) {
@@ -381,6 +383,14 @@ void BoardScreen::setUpPreparedTables() {
       preparedAvailable_ = false;
       return;
     }
+  }
+}
+
+// The prepared tables are copied straight to the panel, so they have to be turned along
+// with the main frame whenever the screen is (which keeps what is drawn on them).
+void BoardScreen::followOrientation() {
+  for (PreparedTable& table : prepared_) {
+    table.canvas.setUpsideDown(ui::upsideDown());
   }
 }
 

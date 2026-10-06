@@ -88,6 +88,18 @@ void present(int top, int height) { frameCanvas.present(top, height); }
 
 void presentAll() { present(0, kScreenHeight); }
 
+void setUpsideDown(bool upsideDown) {
+  if (upsideDown == frameCanvas.upsideDown()) {
+    return;
+  }
+  frameCanvas.setUpsideDown(upsideDown);
+  M5.Display.setRotation(frameCanvas.logicalRotation());
+  presentAll();
+  ESP_LOGI(TAG, "screen %s", upsideDown ? "upside down" : "upright");
+}
+
+bool upsideDown() { return frameCanvas.upsideDown(); }
+
 void drawFittedText(const char* text, const Rect& area, int maxSize, int minSize, uint32_t color) {
   const int size = text::fitSize(text, area.w - 2 * kTextPadding, maxSize, minSize);
   // At minSize the text may still be too wide: clipped text beats text in the next column.

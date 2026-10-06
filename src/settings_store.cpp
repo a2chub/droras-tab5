@@ -16,6 +16,7 @@ const char* kServerAddressKey = "rpi_addr";
 const char* kWifiSlotKey = "wifi_slot";
 const char* kVolumeKey = "volume";
 const char* kBrightnessKey = "brightness";
+const char* kOrientationModeKey = "orient_mode";
 
 std::optional<int> loadSmallInt(const char* key) {
   nvs_handle_t handle;
@@ -134,5 +135,21 @@ esp_err_t saveVolumeLevel(int level) { return saveSmallInt(kVolumeKey, level); }
 
 std::optional<int> loadBrightnessLevel() { return loadSmallInt(kBrightnessKey); }
 esp_err_t saveBrightnessLevel(int level) { return saveSmallInt(kBrightnessKey, level); }
+
+std::optional<heatboard::OrientationMode> loadOrientationMode() {
+  const auto value = loadSmallInt(kOrientationModeKey);
+  if (!value) {
+    return std::nullopt;
+  }
+  const auto mode = heatboard::orientationModeFromInt(*value);
+  if (!mode) {
+    ESP_LOGW(TAG, "stored orientation mode %d is invalid, ignoring", *value);
+  }
+  return mode;
+}
+
+esp_err_t saveOrientationMode(heatboard::OrientationMode mode) {
+  return saveSmallInt(kOrientationModeKey, static_cast<int>(mode));
+}
 
 }  // namespace settings_store

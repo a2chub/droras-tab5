@@ -108,6 +108,7 @@ bool Canvas::beginLike(const Canvas& other) {
   stepY_ = other.stepY_;
   logicalRotation_ = other.logicalRotation_;
   nativeRotation_ = other.nativeRotation_;
+  upsideDown_ = other.upsideDown_;
   return other.pixels_ != nullptr && allocate();
 }
 
@@ -120,6 +121,23 @@ bool Canvas::allocate() {
   }
   fillScreen(0x000000u);
   return true;
+}
+
+void Canvas::setUpsideDown(bool upsideDown) {
+  if (upsideDown == upsideDown_ || pixels_ == nullptr) {
+    return;
+  }
+  upsideDown_ = upsideDown;
+  // Half a turn of a row-major image is the same buffer read backwards: the pixel at index
+  // i moves to last - i. Reversing the buffer and remapping coordinates the same way keeps
+  // every logical pixel's colour, so nothing has to be drawn again.
+  const int last = nativeWidth_ * nativeHeight_ - 1;
+  std::reverse(pixels_, pixels_ + last + 1);
+  origin_ = last - origin_;
+  stepX_ = -stepX_;
+  stepY_ = -stepY_;
+  // M5GFX rotations 0-3 are quarter turns, so two more is the opposite landscape.
+  logicalRotation_ = static_cast<uint8_t>(logicalRotation_ ^ 2);
 }
 
 Canvas::NativeRect Canvas::toNative(int x, int y, int w, int h) const {

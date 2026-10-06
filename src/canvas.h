@@ -28,6 +28,16 @@ class Canvas {
   // For additional canvases: begin() draws probe pixels on the panel, this does not.
   bool beginLike(const Canvas& other);
 
+  // Turns the logical coordinate system half a turn on the panel (or back), keeping what is
+  // drawn: afterwards every logical pixel still holds the same colour, it is just shown
+  // upside down relative to before. Call present() to put that on the panel.
+  void setUpsideDown(bool upsideDown);
+  bool upsideDown() const { return upsideDown_; }
+
+  // The M5GFX rotation that matches this canvas's logical coordinates. The display is kept
+  // at it so that touch coordinates and readRect() agree with what is drawn.
+  uint8_t logicalRotation() const { return logicalRotation_; }
+
   int width() const { return logicalWidth_; }
   int height() const { return logicalHeight_; }
 
@@ -70,4 +80,5 @@ class Canvas {
   int stepY_ = 0;
   uint8_t logicalRotation_ = 0;
   uint8_t nativeRotation_ = 0;
+  bool upsideDown_ = false;
 };

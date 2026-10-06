@@ -38,7 +38,10 @@ PY=~/.platformio/penv/bin/python
 $PY tools/screenshot.py out.png                       # 現在の画面を保存（約2秒）
 $PY tools/screenshot.py out.png --send "tap 1190 28"  # 座標をタップしてから保存
 $PY tools/screenshot.py out.png --send "key 3"        # key 1=スタート/ストップ 2=前 3=次
+$PY tools/screenshot.py out.png --send "imu"          # 加速度と向きの判定をシリアルログに出す
 ```
+
+キャプチャとタップの座標は、上下反転表示中も画面に見えている向き（UI の座標）のまま。
 
 ## Wi-Fi の設定
 
@@ -83,6 +86,8 @@ $PY tools/screenshot.py out.png --send "key 3"        # key 1=スタート/ス�
   塗るのに約45ms、パネルへ転送するのに約50ms かかる。文字のラスタライズはグリフキャッシュで、
   塗りは隣のヒートの表を事前に描いておくこと（`board_screen.cpp` の PreparedTable）で省いているが、
   転送の約50ms は減らせない。
+- **加速度センサーの軸**: M5Unified が返す Tab5 の加速度は、横向きを通常の向きで立てると X ≈ -1g、
+  上下逆さで X ≈ +1g、平置きで Z ≈ -1g（実測）。`screen_orientation.cpp` の `downAxisG()` がこれに依存する。
 - **メインタスクのスタック**: FreeType のラスタライザがスタック上に 16KB のバッファを取るため 32KB にしている。
 
 ## 工場出荷ファームウェアの復元
