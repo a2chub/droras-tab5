@@ -1,7 +1,8 @@
 // Settings screen with five tabs: Wi-Fi preset selection, Raspberry Pi server address
 // (numeric keypad, plus pilot list reload), speaker volume / screen brightness, screen
-// orientation (automatic from the accelerometer, or fixed by hand), and hand gesture
-// operation (on/off, hold time, which gesture does what).
+// orientation (automatic from the accelerometer, or fixed by hand), hand gesture
+// operation (on/off, hold time, which gesture does what), and a live camera view showing
+// what the gesture recognition sees.
 #pragma once
 
 #include <cstdint>
@@ -24,7 +25,7 @@ class SettingsScreen {
   Action handleTap(int x, int y, const AppSnapshot& snapshot);
 
  private:
-  enum class Tab { Wifi, Server, Device, Orientation, Gesture };
+  enum class Tab { Wifi, Server, Device, Orientation, Gesture, Camera };
 
   void selectTab(Tab tab, const AppSnapshot& snapshot);
   void drawTabBar();
@@ -58,6 +59,10 @@ class SettingsScreen {
   void handleGestureTap(int x, int y);
   void saveGestureSettings(const heatboard::GestureSettings& settings);
 
+  void drawCameraTab();
+  void drawCameraPreview();
+  void drawCameraInfo();
+
   Tab tab_ = Tab::Wifi;
   std::string addressText_;
   std::string message_;
@@ -68,4 +73,6 @@ class SettingsScreen {
   bool drawnUpsideDown_ = false;
   heatboard::Gesture drawnSeen_ = heatboard::Gesture::None;
   int drawnSeenScore_ = -1;  // tenths
+  uint32_t drawnPreviewFrame_ = 0;
+  uint16_t* previewPixels_ = nullptr;  // a copy of the latest camera picture, allocated on first use
 };

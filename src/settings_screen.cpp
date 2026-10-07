@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <optional>
 
+#include "esp_heap_caps.h"
 #include "gesture_names.h"
 #include "hand_gesture.h"
 #include "heatboard/server_address.h"
@@ -25,8 +26,8 @@ using ui::Rect;
 constexpr Rect kBackButton = {1080, 12, 180, 64};
 constexpr int kTitleBarBottom = 88;
 
-constexpr int kTabCount = 5;
-constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き", "ジェスチャー"};
+constexpr int kTabCount = 6;
+constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き", "ジェスチャー", "カメラ"};
 constexpr int kMargin = 40;
 constexpr int kTabTop = 100;
 constexpr int kTabGap = 20;
@@ -113,6 +114,15 @@ Rect assignmentPrevButton(int index) { return {560, assignmentRow(index).y, kAss
 Rect assignmentValue(int index) { return {660, assignmentRow(index).y, 480, 60}; }
 Rect assignmentNextButton(int index) { return {1150, assignmentRow(index).y, kAssignmentButtonWidth, 60}; }
 
+// Camera tab: the picture the recognition sees, three times its size, mirrored like a
+// selfie so that the hand moves the way the operator moves it; status to the right.
+constexpr int kPreviewScale = 3;
+constexpr Rect kPreviewArea = {kMargin, 176, hand_gesture::kPreviewWidth * kPreviewScale,
+                               hand_gesture::kPreviewHeight * kPreviewScale};
+constexpr Rect kCameraInfoArea = {kPreviewArea.x + kPreviewArea.w + 20, kPreviewArea.y,
+                                  ui::kScreenWidth - kMargin - (kPreviewArea.x + kPreviewArea.w + 20), kPreviewArea.h};
+constexpr Rect kCameraHoldBar = {kCameraInfoArea.x, kCameraInfoArea.y + 250, kCameraInfoArea.w, 36};
+
 Rect tabRect(int index) { return {kMargin + index * (kTabWidth + kTabGap), kTabTop, kTabWidth, kTabHeight}; }
 
 Rect wifiButtonRect(int slot) {
@@ -191,6 +201,8 @@ void SettingsScreen::show(const AppSnapshot& snapshot) {
 
 void SettingsScreen::selectTab(Tab tab, const AppSnapshot& snapshot) {
   tab_ = tab;
+  hand_gesture::setPreview(tab == Tab::Camera);
+  drawnPreviewFrame_ = 0;
   message_.clear();
   messageIsError_ = false;
   if (tab == Tab::Server) {
@@ -221,6 +233,7 @@ void SettingsScreen::drawTabContent(const AppSnapshot& snapshot) {
     case Tab::Device: drawDeviceTab(); break;
     case Tab::Orientation: drawOrientationTab(); break;
     case Tab::Gesture: drawGestureTab(); break;
+    case Tab::Camera: drawCameraTab(); break;
   }
 }
 
@@ -230,6 +243,9 @@ void SettingsScreen::update(const AppSnapshot& snapshot) {
       (screen_orientation::sensed() != drawnSensed_ || ui::upsideDown() != drawnUpsideDown_)) {
     drawOrientationInfo();
     presentContent();
+  }
+  if (tab_ == Tab::Camera) {
+    drawCameraPreview();
   }
   // Likewise what the camera sees, so a gesture can be tried out while assigning it.
   if (tab_ == Tab::Gesture) {
@@ -257,6 +273,7 @@ void SettingsScreen::update(const AppSnapshot& snapshot) {
 SettingsScreen::Action SettingsScreen::handleTap(int x, int y, const AppSnapshot& snapshot) {
   if (kBackButton.contains(x, y)) {
     ui::beepAccepted();
+    hand_gesture::setPreview(false);
     return Action::Close;
   }
   for (int i = 0; i < kTabCount; ++i) {
@@ -275,6 +292,7 @@ SettingsScreen::Action SettingsScreen::handleTap(int x, int y, const AppSnapshot
     case Tab::Device: handleDeviceTap(x, y); break;
     case Tab::Orientation: handleOrientationTap(x, y); break;
     case Tab::Gesture: handleGestureTap(x, y); break;
+    case Tab::Camera: break;  // nothing to tap
   }
   // The handlers redraw only small pieces of the tab; one copy covers whichever they touched.
   presentContent();
@@ -697,4 +715,102 @@ void SettingsScreen::handleGestureTap(int x, int y) {
     saveGestureSettings(settings);
     return;
   }
+}
+
+// --- Camera tab ------------------------------------------------------------------------
+
+void SettingsScreen::drawCameraTab() {
+  ui::drawOutlinedRoundRect({kPreviewArea.x - 2, kPreviewArea.y - 2, kPreviewArea.w + 4, kPreviewArea.h + 4}, 4,
+                            ui::kColorGray, ui::kColorPanel);
+  if (!hand_gesture::cameraAvailable()) {
+    ui::drawFittedText("カメラが使えません", kPreviewArea, 40, 24, ui::kColorMutedText);
+  } else {
+    ui::drawFittedText("カメラの映像を待っています…", kPreviewArea, 32, 20, ui::kColorMutedText);
+  }
+  drawCameraInfo();
+}
+
+// The picture with the detected hand framed, redrawn whenever the recognition task has
+// analysed a new frame (7-10 a second). Copying the frame and stretching it costs the main
+// loop some tens of milliseconds, which only the settings screen pays while this tab is up.
+void SettingsScreen::drawCameraPreview() {
+  if (!hand_gesture::cameraAvailable()) {
+    return;
+  }
+  if (previewPixels_ == nullptr) {
+    previewPixels_ = static_cast<uint16_t*>(heap_caps_malloc(
+        static_cast<std::size_t>(hand_gesture::kPreviewWidth) * hand_gesture::kPreviewHeight * sizeof(uint16_t),
+        MALLOC_CAP_SPIRAM));
+    if (previewPixels_ == nullptr) {
+      return;
+    }
+  }
+  const uint32_t frame = hand_gesture::copyPreview(previewPixels_);
+  if (frame == 0 || frame == drawnPreviewFrame_) {
+    return;
+  }
+  drawnPreviewFrame_ = frame;
+
+  ui::frame().drawRgb565(kPreviewArea.x, kPreviewArea.y, kPreviewArea.w, kPreviewArea.h, previewPixels_,
+                         hand_gesture::kPreviewWidth, hand_gesture::kPreviewHeight, /*mirror=*/true);
+  const auto status = hand_gesture::status();
+  if (status.handSeen) {
+    // The box comes in picture coordinates; mirrored and scaled like the picture.
+    const int left = kPreviewArea.x + (hand_gesture::kPreviewWidth - status.handBox[2]) * kPreviewScale;
+    const int right = kPreviewArea.x + (hand_gesture::kPreviewWidth - status.handBox[0]) * kPreviewScale;
+    const int top = kPreviewArea.y + status.handBox[1] * kPreviewScale;
+    const int bottom = kPreviewArea.y + status.handBox[3] * kPreviewScale;
+    const uint32_t color = status.seen == Gesture::None ? ui::kColorAmber : ui::kColorGreen;
+    constexpr int kLine = 4;
+    ui::frame().fillRect(left, top, right - left, kLine, color);
+    ui::frame().fillRect(left, bottom - kLine, right - left, kLine, color);
+    ui::frame().fillRect(left, top, kLine, bottom - top, color);
+    ui::frame().fillRect(right - kLine, top, kLine, bottom - top, color);
+  }
+  drawCameraInfo();
+  ui::present(kPreviewArea.y, kPreviewArea.h);
+}
+
+void SettingsScreen::drawCameraInfo() {
+  const Rect& area = kCameraInfoArea;
+  ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+  const auto status = hand_gesture::status();
+  const GestureSettings settings = hand_gesture::settings();
+  int y = area.y;
+
+  ui::drawText("判定", area.x, y, 24, ui::kColorMutedText);
+  y += 34;
+  const char* verdict = !status.handSeen           ? "手が見つかりません"
+                        : status.seen == Gesture::None ? "手はあるが形が不明"
+                                                       : gesture_names::gesture(status.seen);
+  ui::drawFittedText(verdict, {area.x, y, area.w, 40}, 30, 18, status.seen == Gesture::None ? ui::kColorText : ui::kColorGreen);
+  y += 48;
+  char line[64];
+  if (status.handSeen) {
+    snprintf(line, sizeof(line), "%s %d%%", status.seenLabel, static_cast<int>(status.seenScore * 100));
+    ui::drawText(line, area.x, y, 22, ui::kColorMutedText);
+  }
+  y += 40;
+
+  if (const auto action = settings.actionOf(status.seen); status.seen != Gesture::None) {
+    ui::drawText(action ? "→ 割り当て:" : "→ 割り当てなし", area.x, y, 22, ui::kColorMutedText);
+    if (action) {
+      ui::drawFittedText(gesture_names::action(*action), {area.x, y + 30, area.w, 36}, 26, 16, ui::kColorText);
+    }
+  }
+
+  // The hold towards a trigger, like the bar on the board.
+  const Rect& bar = kCameraHoldBar;
+  ui::drawText(settings.enabled ? "確定まで" : "確定まで（操作は「使わない」）", area.x, bar.y - 30, 20,
+               ui::kColorMutedText, &area);
+  ui::drawOutlinedRoundRect(bar, 8, ui::kColorGray, ui::kColorPanel);
+  const int filled = static_cast<int>((bar.w - 2) * status.progress);
+  if (filled > 0) {
+    ui::frame().fillRoundRect(bar.x + 1, bar.y + 1, filled, bar.h - 2, 7, ui::kColorBlue);
+  }
+
+  ui::drawText("緑の枠: 形を認識", area.x, bar.y + 60, 20, ui::kColorGreen);
+  ui::drawText("黄の枠: 形が不明", area.x, bar.y + 88, 20, ui::kColorAmber);
+  ui::drawText("目安: 0.5〜1.5m", area.x, bar.y + 130, 20, ui::kColorMutedText);
+  ui::drawText("手のひらに光を", area.x, bar.y + 156, 20, ui::kColorMutedText);
 }

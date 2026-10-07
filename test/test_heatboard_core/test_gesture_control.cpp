@@ -106,9 +106,29 @@ void test_changing_gesture_restarts_the_hold() {
   GestureTrigger trigger;
   const auto settings = enabledSettings();
   trigger.update(Gesture::Two, 0, settings);
-  trigger.update(Gesture::One, 500, settings);
-  TEST_ASSERT_FALSE(trigger.update(Gesture::One, 1200, settings).has_value());
-  assertAction(BoardAction::PreviousHeat, trigger.update(Gesture::One, 1300, settings));
+  trigger.update(Gesture::One, 500, settings);  // first sighting: not yet believed
+  trigger.update(Gesture::One, 600, settings);  // second: the hold restarts here
+  TEST_ASSERT_FALSE(trigger.update(Gesture::One, 1300, settings).has_value());
+  assertAction(BoardAction::PreviousHeat, trigger.update(Gesture::One, 1400, settings));
+}
+
+void test_single_frame_of_another_gesture_is_ignored() {
+  GestureTrigger trigger;
+  const auto settings = enabledSettings();
+  trigger.update(Gesture::Two, 0, settings);
+  trigger.update(Gesture::Three, 300, settings);  // one flickering frame
+  trigger.update(Gesture::Two, 400, settings);
+  assertAction(BoardAction::NextHeat, trigger.update(Gesture::Two, 800, settings));
+}
+
+void test_flicker_through_none_does_not_restart() {
+  GestureTrigger trigger;
+  const auto settings = enabledSettings();
+  trigger.update(Gesture::Two, 0, settings);
+  trigger.update(Gesture::Three, 200, settings);
+  trigger.update(Gesture::None, 300, settings);
+  trigger.update(Gesture::Two, 400, settings);
+  assertAction(BoardAction::NextHeat, trigger.update(Gesture::Two, 800, settings));
 }
 
 void test_unassigned_gesture_never_fires() {
@@ -126,6 +146,7 @@ void test_cooldown_blocks_a_quick_second_trigger() {
   trigger.update(Gesture::Two, 0, settings);
   assertAction(BoardAction::NextHeat, trigger.update(Gesture::Two, 800, settings));
   // Switch straight to another gesture and hold it: within the cooldown it must not fire.
+  trigger.update(Gesture::One, 850, settings);
   trigger.update(Gesture::One, 900, settings);
   TEST_ASSERT_FALSE(trigger.update(Gesture::One, 1700, settings).has_value());
   // Held again afterwards, it does.
@@ -168,6 +189,8 @@ void runGestureControlTests() {
   RUN_TEST(test_short_gap_does_not_restart_the_hold);
   RUN_TEST(test_long_gap_restarts_the_hold);
   RUN_TEST(test_changing_gesture_restarts_the_hold);
+  RUN_TEST(test_single_frame_of_another_gesture_is_ignored);
+  RUN_TEST(test_flicker_through_none_does_not_restart);
   RUN_TEST(test_unassigned_gesture_never_fires);
   RUN_TEST(test_cooldown_blocks_a_quick_second_trigger);
   RUN_TEST(test_disabled_settings_never_fire_and_reset);

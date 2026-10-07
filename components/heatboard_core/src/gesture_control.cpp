@@ -53,6 +53,7 @@ std::optional<BoardAction> GestureTrigger::update(Gesture seen, int64_t nowMs, c
   }
 
   if (seen == Gesture::None) {
+    pendingSwitch_ = Gesture::None;
     if (candidate_ != Gesture::None && nowMs - lastSeenMs_ > kGapToleranceMs) {
       // The hand is gone: whatever was held is over, and a fired hold is released.
       candidate_ = Gesture::None;
@@ -61,6 +62,13 @@ std::optional<BoardAction> GestureTrigger::update(Gesture seen, int64_t nowMs, c
     return std::nullopt;
   }
 
+  if (seen != candidate_ && candidate_ != Gesture::None && seen != pendingSwitch_) {
+    // A single frame of another gesture is the classifier flickering, not the operator:
+    // it counts as a missed frame until it repeats.
+    pendingSwitch_ = seen;
+    return std::nullopt;
+  }
+  pendingSwitch_ = Gesture::None;
   lastSeenMs_ = nowMs;
   if (seen != candidate_) {
     candidate_ = seen;
@@ -97,6 +105,7 @@ float GestureTrigger::progress(int64_t nowMs, const GestureSettings& settings) c
 
 void GestureTrigger::reset() {
   candidate_ = Gesture::None;
+  pendingSwitch_ = Gesture::None;
   armed_ = false;
 }
 

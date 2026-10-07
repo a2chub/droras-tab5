@@ -222,6 +222,29 @@ void Canvas::blendCoverage(const uint8_t* coverage, int w, int h, int x, int y, 
   }
 }
 
+void Canvas::drawRgb565(int x, int y, int w, int h, const uint16_t* pixels, int srcWidth, int srcHeight,
+                        bool mirror) {
+  if (w <= 0 || h <= 0 || srcWidth <= 0 || srcHeight <= 0) {
+    return;
+  }
+  const int x0 = std::max(x, 0);
+  const int y0 = std::max(y, 0);
+  const int x1 = std::min(x + w, logicalWidth_);
+  const int y1 = std::min(y + h, logicalHeight_);
+  for (int py = y0; py < y1; ++py) {
+    const int sy = (py - y) * srcHeight / h;
+    const uint16_t* source = pixels + static_cast<std::size_t>(sy) * srcWidth;
+    uint16_t* target = pixels_ + indexOf(x0, py);
+    for (int px = x0; px < x1; ++px, target += stepX_) {
+      int sx = (px - x) * srcWidth / w;
+      if (mirror) {
+        sx = srcWidth - 1 - sx;
+      }
+      *target = source[sx];
+    }
+  }
+}
+
 void Canvas::present(int top, int height) {
   const int y0 = std::max(top, 0);
   const int y1 = std::min(top + height, logicalHeight_);

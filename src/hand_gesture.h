@@ -31,10 +31,23 @@ void setSettings(const heatboard::GestureSettings& settings);
 struct Status {
   heatboard::Gesture seen = heatboard::Gesture::None;  // in the latest frame (None: no usable hand)
   float seenScore = 0.0f;
+  const char* seenLabel = "";  // the classifier's own word for it (also "no_hand" etc.)
   heatboard::Gesture holding = heatboard::Gesture::None;  // counting towards a trigger
   float progress = 0.0f;                                   // of the hold, 0..1
+  bool handSeen = false;  // a hand was detected in the latest frame (whatever the gesture)
+  int handBox[4] = {};    // its box in preview coordinates: left, top, right, bottom
 };
 Status status();
+
+// Live view for the settings screen. While on, the latest analysed picture is kept for
+// copyPreview() and the models run even when gestures are switched off, so that the
+// operator can see what the camera makes of their hand before enabling anything.
+constexpr int kPreviewWidth = 320;
+constexpr int kPreviewHeight = 180;
+void setPreview(bool on);
+// Copies the latest picture (kPreviewWidth x kPreviewHeight RGB565) into `dest` and returns
+// its sequence number, so the caller redraws only when a new frame arrived. 0 while none.
+uint32_t copyPreview(uint16_t* dest);
 
 // The next action a held gesture triggered, if any. Call every loop iteration.
 std::optional<heatboard::BoardAction> takeAction();

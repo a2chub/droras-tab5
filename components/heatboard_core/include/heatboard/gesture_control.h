@@ -37,8 +37,9 @@ constexpr int kMinHoldMs = 300;
 constexpr int kMaxHoldMs = 2000;
 
 // Decides when a gesture becomes a command. The same gesture has to be reported for
-// holdMs; short gaps (a frame where the hand was missed) do not restart the count, a
-// different gesture does. After firing, the hand has to go away before the same or
+// holdMs; short gaps (a frame where the hand was missed) do not restart the count, and a
+// different gesture only does once it has been reported twice in a row (the classifier
+// flickers for single frames). After firing, the hand has to go away before the same or
 // another gesture can fire again, so that a hand kept up does not repeat the command.
 class GestureTrigger {
  public:
@@ -61,6 +62,7 @@ class GestureTrigger {
 
  private:
   Gesture candidate_ = Gesture::None;
+  Gesture pendingSwitch_ = Gesture::None;  // a different gesture seen once, not yet twice
   int64_t candidateSinceMs_ = 0;
   int64_t lastSeenMs_ = 0;
   bool armed_ = false;  // a hold is counting towards a trigger

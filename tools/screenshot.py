@@ -50,18 +50,20 @@ def read_frame(port, timeout_s):
         *lines, buffer = buffer.split(b"\n")
         for raw in lines:
             line = raw.strip().decode("ascii", "replace")
-            if line.startswith("@SHOT "):
-                _, w, h = line.split()
+            # A log line from another task may be written in pieces and leave its tail glued
+            # to the front of a row, so the markers are looked for anywhere in the line.
+            if "@SHOT " in line:
+                _, w, h = line[line.index("@SHOT "):].split()
                 width, height, rows = int(w), int(h), []
-            elif line.startswith("@R ") and width is not None:
-                data = line[3:]
+            elif "@R " in line and width is not None:
+                data = line[line.index("@R ") + 3:]
                 row = []
                 for i in range(0, len(data), 8):
                     row.extend([int(data[i + 4:i + 8], 16)] * int(data[i:i + 4], 16))
                 if len(row) != width:
                     sys.exit(f"row {len(rows)} decoded to {len(row)} pixels, expected {width} (serial data lost?)")
                 rows.append(row)
-            elif line == "@END" and width is not None:
+            elif line.endswith("@END") and width is not None:
                 if len(rows) != height:
                     sys.exit(f"got {len(rows)} rows, expected {height}")
                 return width, height, rows

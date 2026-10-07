@@ -49,6 +49,11 @@ class Canvas {
   void fillRoundRect(int x, int y, int w, int h, int radius, uint32_t color);
   void fillCircle(int centerX, int centerY, int radius, uint32_t color);
 
+  // Draws an RGB565 (little-endian) image of srcWidth x srcHeight pixels stretched to fill
+  // (x, y, w, h), nearest neighbour; with `mirror` the image is flipped left-to-right.
+  // Clipped to the canvas.
+  void drawRgb565(int x, int y, int w, int h, const uint16_t* pixels, int srcWidth, int srcHeight, bool mirror);
+
   // Blends `color` through an 8-bit coverage map (0 = keep, 255 = replace) whose top-left
   // corner is placed at (x, y). Used for anti-aliased text. Only pixels inside `clip` change.
   void blendCoverage(const uint8_t* coverage, int w, int h, int x, int y, const ClipRect& clip, uint32_t color);

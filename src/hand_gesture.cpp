@@ -56,9 +56,17 @@ constexpr int kFrameBuffers = 2;
 // The models look at the whole frame scaled to a quarter. The detector wants a hand between
 // roughly a tenth and a half of the image (measured with Espressif's sample: a hand filling
 // most of the frame is not found); at a quarter of 1280x720, a hand at arm's length (0.5 to
-// 1.5 m) is a quarter of the width, like the sample's. The scale must be a multiple of 1/16:
-// that is the PPA's resolution, and anything else leaves unwritten stripes at the edges.
-constexpr int kAnalysisScale = 4;
+// 1.5 m) is a quarter of the width, like the sample's.
+//
+// The quarter is reached in two steps: the PPA halves the frame (its scale must be a
+// multiple of 1/16, anything else leaves unwritten stripes at the edges), then 2x2 pixels
+// are averaged on the CPU. The averaging matters: at the high sensor gain of a dim hall the
+// picture is grainy, and the detector misses a hand in grain that plain sub-sampling keeps.
+constexpr int kHalfScale = 2;
+constexpr int kHalfWidth = 1280 / kHalfScale;
+constexpr int kHalfHeight = 720 / kHalfScale;
+constexpr std::size_t kHalfPixels = static_cast<std::size_t>(kHalfWidth) * kHalfHeight;
+constexpr int kAnalysisScale = 2 * kHalfScale;
 constexpr int kAnalysisWidth = 1280 / kAnalysisScale;
 constexpr int kAnalysisHeight = 720 / kAnalysisScale;
 constexpr std::size_t kAnalysisPixels = static_cast<std::size_t>(kAnalysisWidth) * kAnalysisHeight;
@@ -84,6 +92,7 @@ struct Camera {
   uint32_t height = 0;
   uint8_t* buffers[kFrameBuffers] = {};
   ppa_client_handle_t ppa = nullptr;
+  uint16_t* half = nullptr;      // kHalfWidth x kHalfHeight RGB565, the PPA's output
   uint16_t* analysis = nullptr;  // kAnalysisWidth x kAnalysisHeight RGB565
 };
 Camera camera;
@@ -94,13 +103,22 @@ std::mutex sharedMutex;
 GestureSettings sharedSettings;
 Status sharedStatus;
 std::optional<BoardAction> pendingAction;
+std::atomic<bool> previewOn{false};
+uint16_t* previewBuffer = nullptr;  // kAnalysisWidth x kAnalysisHeight, guarded by sharedMutex
+uint32_t previewSequence = 0;
+
+static_assert(kPreviewWidth == kAnalysisWidth && kPreviewHeight == kAnalysisHeight);
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
 // --- Exposure ----------------------------------------------------------------------------
-// Mean brightness of the latest analysed image (0..255, green channel), written by the
-// recognition task; -1 until the first frame.
+// Brightness of the middle of the latest analysed image (0..255, green channel), written by
+// the recognition task; -1 until the first frame. The mean sets the exposure; the bright
+// end (95th percentile) caps it, so that a lit hand in front of a dark room is not burnt to
+// white, which the classifier does not recognise as skin.
 std::atomic<int> frameBrightness{-1};
+std::atomic<int> frameHighlights{0};
+constexpr int kHighlightLimit = 235;
 
 struct ControlRange {
   int min = 0;
@@ -226,7 +244,7 @@ void configureIsp() {
   }
   esp_video_isp_bf_t bf = {};
   bf.enable = true;
-  bf.level = 10;
+  bf.level = 16;
   const uint8_t weights[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
   for (int y = 0; y < 3; ++y) {
     for (int x = 0; x < 3; ++x) {
@@ -249,16 +267,29 @@ void configureIsp() {
 
 // Green channel of every 4th pixel in both directions, 0..252, over the middle half of the
 // picture: that is where the operator stands, and a bright window or lamp at the edge
-// would otherwise drive the exposure down and leave the hand a dark shape.
-int measureBrightness(const uint16_t* pixels, int width, int height) {
+// would otherwise drive the exposure down and leave the hand a dark shape. Returns the
+// mean; `highlights` receives the value the brightest 5% of pixels exceed.
+int measureBrightness(const uint16_t* pixels, int width, int height, int& highlights) {
   constexpr int kStep = 4;
   uint32_t sum = 0;
   int count = 0;
+  int histogram[64] = {};
   for (int y = height / 4; y < height * 3 / 4; y += kStep) {
     const uint16_t* row = pixels + static_cast<std::size_t>(y) * width;
     for (int x = width / 4; x < width * 3 / 4; x += kStep) {
-      sum += (row[x] >> 3) & 0xFC;
+      const int green = (row[x] >> 5) & 0x3F;
+      sum += green << 2;
+      ++histogram[green];
       ++count;
+    }
+  }
+  highlights = 0;
+  int above = 0;
+  for (int bin = 63; bin >= 0; --bin) {
+    above += histogram[bin];
+    if (above >= count / 20) {
+      highlights = bin << 2;
+      break;
     }
   }
   return count > 0 ? static_cast<int>(sum / count) : 0;
@@ -346,11 +377,12 @@ bool openCamera() {
 }
 
 bool setUpAnalysisImage() {
-  // The PPA writes the output with DMA: the buffer has to be cache-line aligned in size
+  // The PPA writes its output with DMA: that buffer has to be cache-line aligned in size
   // and address (128 bytes covers both cache levels).
-  camera.analysis = static_cast<uint16_t*>(
-      heap_caps_aligned_alloc(128, kAnalysisPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
-  if (camera.analysis == nullptr) {
+  camera.half = static_cast<uint16_t*>(
+      heap_caps_aligned_alloc(128, kHalfPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
+  camera.analysis = static_cast<uint16_t*>(heap_caps_malloc(kAnalysisPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+  if (camera.half == nullptr || camera.analysis == nullptr) {
     ESP_LOGE(TAG, "no memory for the analysis image");
     return false;
   }
@@ -365,6 +397,27 @@ bool setUpAnalysisImage() {
   return true;
 }
 
+// Averages 2x2 blocks of `source` (w x h, RGB565) into `dest` (w/2 x h/2).
+void averagePairs(const uint16_t* source, int w, int h, uint16_t* dest) {
+  for (int y = 0; y < h / 2; ++y) {
+    const uint16_t* top = source + static_cast<std::size_t>(2 * y) * w;
+    const uint16_t* bottom = top + w;
+    uint16_t* out = dest + static_cast<std::size_t>(y) * (w / 2);
+    for (int x = 0; x < w / 2; ++x, top += 2, bottom += 2) {
+      const uint16_t p[4] = {top[0], top[1], bottom[0], bottom[1]};
+      int r = 0;
+      int g = 0;
+      int b = 0;
+      for (const uint16_t v : p) {
+        r += v >> 11;
+        g += (v >> 5) & 0x3F;
+        b += v & 0x1F;
+      }
+      out[x] = static_cast<uint16_t>(((r + 2) / 4 << 11) | ((g + 2) / 4 << 5) | (b + 2) / 4);
+    }
+  }
+}
+
 // Shrinks `frame` into camera.analysis, turned so that the operator's hand is upright: the
 // sensor is mounted head-down relative to the landscape UI (measured: a face in front of
 // the normal way up came out inverted), and when the Tab5 itself is turned upside down the
@@ -377,20 +430,21 @@ bool makeAnalysisImage(const uint8_t* frame) {
   op.in.block_w = camera.width;
   op.in.block_h = camera.height;
   op.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-  op.out.buffer = camera.analysis;
-  op.out.buffer_size = kAnalysisPixels * sizeof(uint16_t);
-  op.out.pic_w = kAnalysisWidth;
-  op.out.pic_h = kAnalysisHeight;
+  op.out.buffer = camera.half;
+  op.out.buffer_size = kHalfPixels * sizeof(uint16_t);
+  op.out.pic_w = kHalfWidth;
+  op.out.pic_h = kHalfHeight;
   op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
   op.rotation_angle = ui::upsideDown() ? PPA_SRM_ROTATION_ANGLE_0 : PPA_SRM_ROTATION_ANGLE_180;
-  op.scale_x = 1.0f / kAnalysisScale;
-  op.scale_y = 1.0f / kAnalysisScale;
+  op.scale_x = 1.0f / kHalfScale;
+  op.scale_y = 1.0f / kHalfScale;
   op.mode = PPA_TRANS_MODE_BLOCKING;
   const esp_err_t err = ppa_do_scale_rotate_mirror(camera.ppa, &op);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "PPA scale failed: %s", esp_err_to_name(err));
     return false;
   }
+  averagePairs(camera.half, kHalfWidth, kHalfHeight, camera.analysis);
   return true;
 }
 
@@ -461,14 +515,24 @@ void selfTest(HandDetect& detector, HandGestureRecognizer& recognizer) {
 
 // --- Recognition task ----------------------------------------------------------------------
 
+// What the models made of the latest frame, for the status.
+struct Detection {
+  bool handSeen = false;
+  int box[4] = {};
+  const char* label = "";
+};
+
 // The gesture of the most confidently detected hand, when its classification is clear.
 Gesture pickGesture(HandDetect& detector, HandGestureRecognizer& recognizer, const dl::image::img_t& image,
-                    float& score) {
+                    float& score, Detection& detection) {
   score = 0.0f;
+  detection = Detection{};
   auto& hands = detector.run(image);
   if (hands.empty()) {
     return Gesture::None;
   }
+  // The classifier is given the detector's boxes as they are: it was trained on such
+  // crops, and a box grown to take in missed fingers made it see no hand at all.
   const auto gestures = recognizer.recognize(image, hands);
   std::size_t best = 0;
   std::size_t i = 0;
@@ -482,6 +546,14 @@ Gesture pickGesture(HandDetect& detector, HandGestureRecognizer& recognizer, con
   }
   if (best >= gestures.size()) {
     return Gesture::None;
+  }
+  {
+    const auto& hand = *std::next(hands.begin(), static_cast<long>(best));
+    detection.handSeen = true;
+    for (int k = 0; k < 4; ++k) {
+      detection.box[k] = hand.box[k];
+    }
+    detection.label = gestures[best].cat_name;
   }
   // What the models make of the hand, at most twice a second: enough to tune distance and
   // lighting from the serial log without drowning it.
@@ -540,14 +612,22 @@ void run(void*) {
     if (selfTestRequested.exchange(false)) {
       selfTest(detector, recognizer);
     }
-    frameBrightness = measureBrightness(camera.analysis, kAnalysisWidth, kAnalysisHeight);
+    {
+      int highlights = 0;
+      frameBrightness = measureBrightness(camera.analysis, kAnalysisWidth, kAnalysisHeight, highlights);
+      frameHighlights = highlights;
+    }
 
     GestureSettings settings;
     {
       std::lock_guard<std::mutex> lock(sharedMutex);
       settings = sharedSettings;
+      if (previewOn && previewBuffer != nullptr) {
+        std::memcpy(previewBuffer, camera.analysis, kAnalysisPixels * sizeof(uint16_t));
+        ++previewSequence;
+      }
     }
-    if (!settings.enabled) {
+    if (!settings.enabled && !previewOn) {
       // The picture keeps flowing (exposure, camshot) but nothing is analysed.
       trigger.reset();
       {
@@ -561,7 +641,8 @@ void run(void*) {
     const dl::image::img_t image = rgb565Image(camera.analysis, kAnalysisWidth, kAnalysisHeight);
     const int64_t startedMs = nowMs();
     float score = 0.0f;
-    Gesture seen = pickGesture(detector, recognizer, image, score);
+    Detection detection;
+    Gesture seen = pickGesture(detector, recognizer, image, score, detection);
     lastDetectMs = nowMs() - startedMs;
     const int64_t now = nowMs();
     if (injectedGesture >= 0) {
@@ -581,8 +662,13 @@ void run(void*) {
       std::lock_guard<std::mutex> lock(sharedMutex);
       sharedStatus.seen = seen;
       sharedStatus.seenScore = score;
+      sharedStatus.seenLabel = detection.label;
       sharedStatus.holding = trigger.holding();
       sharedStatus.progress = trigger.progress(now, settings);
+      sharedStatus.handSeen = detection.handSeen;
+      for (int k = 0; k < 4; ++k) {
+        sharedStatus.handBox[k] = detection.box[k];
+      }
       if (action) {
         ESP_LOGI(TAG, "gesture %d triggered action %d", static_cast<int>(seen), static_cast<int>(*action));
         pendingAction = action;
@@ -591,9 +677,10 @@ void run(void*) {
 
     ++frames;
     if (now - lastReportMs >= 10000) {
-      ESP_LOGI(TAG, "%d frames analysed in 10 s (%d ms each, brightness %d, exposure %d, gain %d, wb %.2f/%.2f)",
-               frames, static_cast<int>(lastDetectMs), frameBrightness.load(), exposureRange.value, gainRange.value,
-               redGain, blueGain);
+      ESP_LOGI(TAG,
+               "%d frames analysed in 10 s (%d ms each, brightness %d, highlights %d, exposure %d, gain %d, wb %.2f/%.2f)",
+               frames, static_cast<int>(lastDetectMs), frameBrightness.load(), frameHighlights.load(),
+               exposureRange.value, gainRange.value, redGain, blueGain);
       frames = 0;
       lastReportMs = now;
     }
@@ -647,6 +734,10 @@ void start(const GestureSettings& settings) {
   if (!openCamera() || !setUpAnalysisImage()) {
     return;
   }
+  previewBuffer = static_cast<uint16_t*>(heap_caps_malloc(kAnalysisPixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+  if (previewBuffer == nullptr) {
+    ESP_LOGW(TAG, "no memory for the camera preview");
+  }
   if (!queryControl(V4L2_CID_EXPOSURE, "exposure", exposureRange) || !queryControl(V4L2_CID_GAIN, "gain", gainRange)) {
     autoExposure = false;
   }
@@ -685,6 +776,17 @@ std::optional<BoardAction> takeAction() {
 
 void requestFrameDump() { frameDumpRequested = true; }
 
+void setPreview(bool on) { previewOn = on; }
+
+uint32_t copyPreview(uint16_t* dest) {
+  std::lock_guard<std::mutex> lock(sharedMutex);
+  if (previewBuffer == nullptr || previewSequence == 0) {
+    return 0;
+  }
+  std::memcpy(dest, previewBuffer, kAnalysisPixels * sizeof(uint16_t));
+  return previewSequence;
+}
+
 void injectGesture(int gesture, int durationMs) {
   injectedUntilMs = nowMs() + durationMs;
   injectedGesture = gesture;
@@ -705,14 +807,24 @@ void updateExposure() {
     return;
   }
   lastExposureStepMs = now;
-  if (std::abs(brightness - kBrightnessTarget) <= kBrightnessDeadband) {
+  const int highlights = frameHighlights.load();
+  float stops = 0.0f;
+  if (highlights > kHighlightLimit) {
+    // Burning out: come down a third of a stop at a time until the bright end fits.
+    stops = -0.33f;
+  } else if (std::abs(brightness - kBrightnessTarget) > kBrightnessDeadband) {
+    // One jump to the ratio that would reach the target, damped by half; but never up
+    // into burnt highlights.
+    const float ratio = static_cast<float>(kBrightnessTarget) / std::max(brightness, 4);
+    stops = std::log2(ratio) / 2.0f;
+    if (stops > 0.0f && highlights > kHighlightLimit - 20) {
+      return;
+    }
+  } else {
     return;
   }
-
-  // One jump to the ratio that would reach the target, damped by half. Exposure time is
-  // used up before gain (gain adds noise), and gain is given back before exposure time.
-  const float ratio = static_cast<float>(kBrightnessTarget) / std::max(brightness, 4);
-  const float stops = std::log2(ratio) / 2.0f;
+  // Exposure time is used up before gain (gain adds noise), and gain is given back before
+  // exposure time.
   int exposure = exposureRange.value;
   int gain = gainRange.value;
   if (stops > 0.0f) {
