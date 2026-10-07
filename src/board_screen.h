@@ -7,6 +7,7 @@
 
 #include "app_state.h"
 #include "canvas.h"
+#include "heatboard/gesture_control.h"
 
 class BoardScreen {
  public:
@@ -22,6 +23,10 @@ class BoardScreen {
 
   // Same shortcuts as the droras web UI: '1' start/stop, '2' previous heat, '3' next heat.
   void handleKey(char key, const AppSnapshot& snapshot);
+
+  // What a button press does, for input that is not a tap (keys, hand gestures), with the
+  // same sounds as a tap.
+  void perform(heatboard::BoardAction action, const AppSnapshot& snapshot);
 
  private:
   bool canCommand(const AppSnapshot& snapshot) const;
@@ -77,6 +82,8 @@ class BoardScreen {
   uint32_t drawnRevision_ = 0;
   std::string drawnStatus_;
   uint32_t drawnStatusDot_ = 0;
+  heatboard::Gesture drawnGesture_ = heatboard::Gesture::None;  // gesture indicator in the status bar
+  int drawnGestureStep_ = -1;
   TableKey drawnTable_;
 
   PreparedTable prepared_[kPreparedTables];

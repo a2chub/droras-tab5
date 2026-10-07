@@ -12,5 +12,6 @@ int main() {
   runSocketIoCodecTests();
   runServerAddressTests();
   runOrientationTests();
+  runGestureControlTests();
   return UNITY_END();
 }

@@ -7,6 +7,7 @@
 #include "app_state.h"
 #include "board_screen.h"
 #include "debug_console.h"
+#include "hand_gesture.h"
 #include "network_task.h"
 #include "screen_orientation.h"
 #include "settings_screen.h"
@@ -23,6 +24,9 @@ enum class Screen { Board, Settings };
 }  // namespace
 
 extern "C" void app_main(void) {
+  // Before M5.begin(): the camera sensor sits on the same I2C bus as the touch panel, and
+  // M5GFX shares a bus that is already open instead of taking the port over.
+  hand_gesture::prepareSharedI2c();
   auto cfg = M5.config();
   M5.begin(cfg);
 
@@ -42,6 +46,7 @@ extern "C" void app_main(void) {
   screen_orientation::init();
   debug_console::start();
   network_task::start();
+  hand_gesture::start(settings_store::loadGestureSettings());
 
   BoardScreen board;
   SettingsScreen settings;
@@ -53,6 +58,7 @@ extern "C" void app_main(void) {
     // Before M5.update() reads the touch panel, so that a tap is mapped with the rotation
     // of the screen it is handled on.
     screen_orientation::update();
+    hand_gesture::updateExposure();
     M5.update();
     if (AppState::instance().revision() != snapshot.revision) {
       snapshot = AppState::instance().snapshot();
@@ -89,6 +95,26 @@ extern "C" void app_main(void) {
         case debug_console::Command::Type::Imu:
           screen_orientation::logReading();
           break;
+        case debug_console::Command::Type::CameraShot:
+          hand_gesture::requestFrameDump();
+          break;
+        case debug_console::Command::Type::CameraTest:
+          hand_gesture::requestSelfTest();
+          break;
+        case debug_console::Command::Type::CameraExposure:
+          hand_gesture::setExposure(command.x, command.y);
+          break;
+        case debug_console::Command::Type::GestureInject:
+          hand_gesture::injectGesture(command.x, command.y);
+          break;
+      }
+    }
+
+    if (const auto action = hand_gesture::takeAction()) {
+      if (screen == Screen::Board) {
+        board.perform(*action, snapshot);
+      } else {
+        ESP_LOGI(TAG, "gesture ignored while the settings screen is open");
       }
     }
 

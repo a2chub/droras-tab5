@@ -31,3 +31,16 @@ CONFIG_ESP32P4_TAB5_C6_BOARD=y
 # after the reset pulse. On this board that holds the C6 in reset: SDIO enumeration then
 # times out (sdmmc send_op_cond 0x107). "Active high" (pulse low, idle high) works.
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+
+# Camera: the Tab5's SC2356 answers to the SC202CS driver (MIPI-CSI, 1 lane, RAW8 720p;
+# the ISP turns that into RGB565). No DVP camera on this board.
+CONFIG_CAMERA_SC202CS=y
+CONFIG_CAMERA_SC202CS_MIPI_RAW8_1280X720_30FPS=y
+# CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE is not set
+# The ISP pipeline controller would adjust exposure from its own task over the sensor's
+# I2C bus, which is shared with M5GFX (touch, IMU) and may only be used from one task at a
+# time (see hand_gesture.cpp), so it stays off.
+# CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER is not set
+# Models linked into the firmware; the app partition has room (see partitions.csv).
+CONFIG_HAND_DETECT_MODEL_IN_FLASH_RODATA=y
+CONFIG_HAND_GESTURE_CLS_MODEL_IN_FLASH_RODATA=y

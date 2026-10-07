@@ -11,7 +11,7 @@
 | 接続 | USB-C = ESP32-P4 内蔵 USB-Serial/JTAG（macOS では `/dev/cu.usbmodemXXXX`） |
 | ビルド | PlatformIO Core 6.1.19 + pioarduino platform-espressif32 55.03.38-1 |
 | フレームワーク | ESP-IDF 5.5.4（PlatformIO 管理。ネイティブの `idf.py` は未導入） |
-| ライブラリ | M5Unified / M5GFX、esp_hosted 2.x + esp_wifi_remote、esp_websocket_client、FreeType（ESP-IDF コンポーネントマネージャ経由、`dependencies.lock` で固定） |
+| ライブラリ | M5Unified / M5GFX、esp_hosted 2.x + esp_wifi_remote、esp_websocket_client、FreeType、esp_video + esp_cam_sensor（カメラ）、ESP-DL + hand_detect + hand_gesture_recognition（ESP-IDF コンポーネントマネージャ経由、`dependencies.lock` で固定） |
 | フォント | IPAex ゴシック（`assets/fonts/ipaexg.ttf`、ファームに埋め込み。ライセンスは同フォルダ） |
 
 Arduino コアは導入していない（追加で数GB必要なため）。
@@ -39,6 +39,10 @@ $PY tools/screenshot.py out.png                       # 現在の画面を保存
 $PY tools/screenshot.py out.png --send "tap 1190 28"  # 座標をタップしてから保存
 $PY tools/screenshot.py out.png --send "key 3"        # key 1=スタート/ストップ 2=前 3=次
 $PY tools/screenshot.py out.png --send "imu"          # 加速度と向きの判定をシリアルログに出す
+$PY tools/screenshot.py cam.png --command camshot     # ジェスチャー認識が見ている画像（320x180）を保存
+$PY tools/screenshot.py out.png --send "camtest"      # 内蔵サンプル画像でモデルを動かす（ログに "one" が出れば正常）
+$PY tools/screenshot.py out.png --send "gest 2 3000"  # 3秒間「ピース」を見たことにする（発火と表示の確認）
+$PY tools/screenshot.py out.png --send "cam 1000 50"  # 露出 1000 ライン・ゲイン index 50 に固定（"cam auto" で自動に戻す）
 ```
 
 キャプチャとタップの座標は、上下反転表示中も画面に見えている向き（UI の座標）のまま。
@@ -88,6 +92,21 @@ $PY tools/screenshot.py out.png --send "imu"          # 加速度と向きの判
   転送の約50ms は減らせない。
 - **加速度センサーの軸**: M5Unified が返す Tab5 の加速度は、横向きを通常の向きで立てると X ≈ -1g、
   上下逆さで X ≈ +1g、平置きで Z ≈ -1g（実測）。`screen_orientation.cpp` の `downAxisG()` がこれに依存する。
+- **カメラの I2C は M5GFX と共有**: センサー（SC2356、SC202CS ドライバ）の SCCB は内部 I2C（I2C_NUM_1、SDA=31/SCL=32）で、
+  タッチ・IMU・IO エキスパンダと同じバス。M5GFX は「先に `i2c_master` のバスが作られていればそれを共有する」ので、
+  `M5.begin()` より前に `i2c_new_master_bus()` し、そのハンドルを esp_video に渡している（`hand_gesture.cpp`）。
+  共有は排他制御されないため、センサーへの I2C アクセス（esp_video の初期化・露出設定）は必ずメインタスクから行う。
+  このため ISP パイプラインコントローラ（esp_ipa、別タスクで I2C を叩く）は使わず、露出・ゲイン・WB は自前。
+  なお esp_ipa の既製ライブラリは rev 1.3 で不正命令になるという報告もある（esp-video-components #99）。
+- **ESP-DL は rev 1.3 で動く**: 公式サンプル画像で手を検出・分類できることを確認済み（`camtest`）。
+- **検出器は大きな手を見つけられない**: 公式画像の手を画面の 6 割以上に拡大すると検出されなくなる。
+  720px 切り出しでは腕を伸ばした手が大きすぎて全く検出できなかったので、解析画像はフレーム全体の 1/4 縮小にした。
+- **PPA の縮小率は 1/16 刻み**: 1/3 を指定すると 5/16 になり、出力バッファの端に未描画の縞が残る。1/2、1/4 など正確に表せる値を使う。
+- **カメラは上下逆に付いている**: 横向き UI に対して映像が 180° 回転しているので、PPA で回転して解析している
+  （本体を上下反転表示にしているときは回転なし）。
+- **ホワイトバランスは全体で測る**: 手だけが写る切り出し領域でグレーワールドを計算すると肌色が灰色に補正され、認識できなくなる。
+- **シリアルへの長い行は直接ドライバに書く**: stdio 経由だと長い行が分割され、他タスクのログが行の途中に混ざって
+  画面ダンプのデコードに失敗する。`usb_serial_jtag_write_bytes()` で 1 行を 1 回で書く。
 - **メインタスクのスタック**: FreeType のラスタライザがスタック上に 16KB のバッファを取るため 32KB にしている。
 
 ## リリースの保存と復元（いつでも前の版に戻す）

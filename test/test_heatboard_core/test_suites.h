@@ -8,3 +8,4 @@ void runHeatWindowTests();
 void runSocketIoCodecTests();
 void runServerAddressTests();
 void runOrientationTests();
+void runGestureControlTests();

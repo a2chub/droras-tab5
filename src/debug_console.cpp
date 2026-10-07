@@ -42,6 +42,26 @@ bool parseLine(const char* line, Command& command) {
     command = {Command::Type::Imu, 0, 0, 0};
     return true;
   }
+  if (strcmp(line, "camshot") == 0) {
+    command = {Command::Type::CameraShot, 0, 0, 0};
+    return true;
+  }
+  if (strcmp(line, "camtest") == 0) {
+    command = {Command::Type::CameraTest, 0, 0, 0};
+    return true;
+  }
+  if (strcmp(line, "cam auto") == 0) {
+    command = {Command::Type::CameraExposure, 0, -1, 0};
+    return true;
+  }
+  if (sscanf(line, "cam %d %d", &x, &y) == 2) {
+    command = {Command::Type::CameraExposure, 0, x, y};
+    return true;
+  }
+  if (sscanf(line, "gest %d %d", &x, &y) == 2) {
+    command = {Command::Type::GestureInject, 0, x, y};
+    return true;
+  }
   return false;
 }
 
@@ -99,10 +119,16 @@ void dumpScreenshot() {
 
   // One line per pixel row, run-length encoded as <count><rgb565> hex pairs: the UI is
   // mostly flat colour, so this is a few hundred kilobytes instead of several megabytes.
-  // Each row goes out in a single write: log lines from other tasks can then only land
-  // between rows, where the decoder skips them, instead of corrupting a row.
+  // Each row goes out in a single write straight to the serial driver (stdio would split
+  // a long row): log lines from other tasks can then only land between rows, where the
+  // decoder skips them, instead of corrupting a row.
   std::string line;
-  printf("\n@SHOT %d %d\n", width, height);
+  const auto write = [](const std::string& text) {
+    usb_serial_jtag_write_bytes(text.data(), text.size(), portMAX_DELAY);
+  };
+  char header[32];
+  snprintf(header, sizeof(header), "\n@SHOT %d %d\n", width, height);
+  write(header);
   for (int y = 0; y < height; ++y) {
     M5.Display.readRect(0, y, width, 1, row.data());
     line.assign("@R ");
@@ -119,10 +145,9 @@ void dumpScreenshot() {
       x += run;
     }
     line.push_back('\n');
-    fwrite(line.data(), 1, line.size(), stdout);
+    write(line);
   }
-  printf("@END\n");
-  fflush(stdout);
+  write("@END\n");
 }
 
 }  // namespace debug_console

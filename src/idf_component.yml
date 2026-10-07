@@ -12,3 +12,10 @@ dependencies:
   # TrueType rasteriser for the embedded IPAex Gothic font: the bitmap fonts bundled with
   # M5GFX stop at JIS level 1 and cannot show many surnames (邉, 螻, 髙, ...).
   espressif/freetype: "^2.14.3"
+  # Camera: V4L2-style capture from the Tab5's MIPI-CSI sensor (SC2356, driven by the
+  # SC202CS driver in esp_cam_sensor, pulled in transitively) through the P4's ISP.
+  espressif/esp_video: "^2.5.0"
+  # Hand gesture operation of the buttons: a hand detector plus a gesture classifier on
+  # top of ESP-DL (pulled in transitively).
+  espressif/hand_detect: "^0.2.0"
+  espressif/hand_gesture_recognition: "^0.2.0"

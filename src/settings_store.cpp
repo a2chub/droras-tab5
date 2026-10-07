@@ -1,5 +1,6 @@
 #include "settings_store.h"
 
+#include <algorithm>
 #include <string>
 
 #include "esp_log.h"
@@ -17,6 +18,9 @@ const char* kWifiSlotKey = "wifi_slot";
 const char* kVolumeKey = "volume";
 const char* kBrightnessKey = "brightness";
 const char* kOrientationModeKey = "orient_mode";
+const char* kGestureEnabledKey = "gest_on";
+const char* kGestureHoldKey = "gest_hold";  // tenths of a second
+const char* kGestureActionKeys[heatboard::kBoardActionCount] = {"gest_prev", "gest_next", "gest_start"};
 
 std::optional<int> loadSmallInt(const char* key) {
   nvs_handle_t handle;
@@ -150,6 +154,37 @@ std::optional<heatboard::OrientationMode> loadOrientationMode() {
 
 esp_err_t saveOrientationMode(heatboard::OrientationMode mode) {
   return saveSmallInt(kOrientationModeKey, static_cast<int>(mode));
+}
+
+heatboard::GestureSettings loadGestureSettings() {
+  heatboard::GestureSettings settings;
+  if (const auto on = loadSmallInt(kGestureEnabledKey)) {
+    settings.enabled = *on != 0;
+  }
+  if (const auto hold = loadSmallInt(kGestureHoldKey)) {
+    settings.holdMs = std::clamp(*hold * 100, heatboard::kMinHoldMs, heatboard::kMaxHoldMs);
+  }
+  for (int i = 0; i < heatboard::kBoardActionCount; ++i) {
+    if (const auto value = loadSmallInt(kGestureActionKeys[i])) {
+      if (const auto gesture = heatboard::gestureFromInt(*value)) {
+        settings.assignment[i] = *gesture;
+      } else {
+        ESP_LOGW(TAG, "stored gesture %d for %s is invalid, ignoring", *value, kGestureActionKeys[i]);
+      }
+    }
+  }
+  return settings;
+}
+
+esp_err_t saveGestureSettings(const heatboard::GestureSettings& settings) {
+  esp_err_t err = saveSmallInt(kGestureEnabledKey, settings.enabled ? 1 : 0);
+  if (err == ESP_OK) {
+    err = saveSmallInt(kGestureHoldKey, settings.holdMs / 100);
+  }
+  for (int i = 0; i < heatboard::kBoardActionCount && err == ESP_OK; ++i) {
+    err = saveSmallInt(kGestureActionKeys[i], static_cast<int>(settings.assignment[i]));
+  }
+  return err;
 }
 
 }  // namespace settings_store

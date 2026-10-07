@@ -3,6 +3,7 @@ idf_component_register(
     "src/heat_list.cpp"
     "src/heat_window.cpp"
     "src/orientation.cpp"
+    "src/gesture_control.cpp"
     "src/server_address.cpp"
     "src/socketio_codec.cpp"
   INCLUDE_DIRS "include"

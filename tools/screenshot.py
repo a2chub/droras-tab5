@@ -4,6 +4,7 @@
 Usage:
     ~/.platformio/penv/bin/python tools/screenshot.py out.png [--port /dev/cu.usbmodemXXXX]
     ~/.platformio/penv/bin/python tools/screenshot.py out.png --send "tap 1190 28"
+    ~/.platformio/penv/bin/python tools/screenshot.py cam.png --command camshot
 
 --send writes debug console commands (see src/debug_console.h) before capturing.
 Needs pyserial, which the PlatformIO virtualenv already provides.
@@ -93,6 +94,7 @@ def main():
     parser.add_argument("--send", action="append", default=[], help="console command to send first (repeatable)")
     parser.add_argument("--settle", type=float, default=0.5, help="seconds to wait after each --send command")
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--command", default="shot", help='"shot" for the screen (default), "camshot" for the camera')
     args = parser.parse_args()
 
     port = open_port(args.port or find_port())
@@ -102,7 +104,7 @@ def main():
             port.flush()
             time.sleep(args.settle)
         port.reset_input_buffer()
-        port.write(b"shot\n")
+        port.write(args.command.encode() + b"\n")
         port.flush()
         width, height, rows = read_frame(port, args.timeout)
     finally:

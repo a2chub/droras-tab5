@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "esp_err.h"
+#include "heatboard/gesture_control.h"
 #include "heatboard/orientation.h"
 #include "heatboard/server_address.h"
 
@@ -32,5 +33,10 @@ esp_err_t saveBrightnessLevel(int level);
 // Screen orientation mode from the settings screen; nullopt if never chosen (or unusable).
 std::optional<heatboard::OrientationMode> loadOrientationMode();
 esp_err_t saveOrientationMode(heatboard::OrientationMode mode);
+
+// Hand gesture operation: on/off, hold time and which gesture does what. Fields never
+// saved (or unusable) come back at their defaults.
+heatboard::GestureSettings loadGestureSettings();
+esp_err_t saveGestureSettings(const heatboard::GestureSettings& settings);
 
 }  // namespace settings_store

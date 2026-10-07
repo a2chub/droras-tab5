@@ -1,7 +1,11 @@
 #include "settings_screen.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
 
+#include "gesture_names.h"
+#include "hand_gesture.h"
 #include "heatboard/server_address.h"
 #include "screen_orientation.h"
 #include "settings_store.h"
@@ -10,6 +14,9 @@
 
 namespace {
 
+using heatboard::BoardAction;
+using heatboard::Gesture;
+using heatboard::GestureSettings;
 using heatboard::Orientation;
 using heatboard::OrientationMode;
 using ui::Rect;
@@ -18,8 +25,8 @@ using ui::Rect;
 constexpr Rect kBackButton = {1080, 12, 180, 64};
 constexpr int kTitleBarBottom = 88;
 
-constexpr int kTabCount = 4;
-constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き"};
+constexpr int kTabCount = 5;
+constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き", "ジェスチャー"};
 constexpr int kMargin = 40;
 constexpr int kTabTop = 100;
 constexpr int kTabGap = 20;
@@ -89,6 +96,23 @@ constexpr int kOrientationButtonWidth =
 constexpr int kOrientationButtonHeight = 150;
 constexpr Rect kOrientationInfoArea = {kMargin, 420, 1200, 120};
 
+// Gesture tab: on/off, hold time, then one row per board action with the gesture assigned
+// to it (◀ ▶ step through the gestures), and what the camera sees right now.
+constexpr Rect kGestureOnButton = {560, kContentTop + 8, 200, 64};
+constexpr Rect kGestureOffButton = {780, kContentTop + 8, 200, 64};
+constexpr LevelControl kHoldControl = {"確定までの時間（同じ形を見せ続ける長さ）", 252};
+constexpr int kHoldStepMs = 100;
+constexpr int kAssignmentTop = 426;
+constexpr int kAssignmentRowHeight = 70;
+constexpr int kAssignmentButtonWidth = 90;
+constexpr Rect kGestureInfoArea = {kMargin, 646, 1200, 36};
+constexpr Rect kGestureMessageArea = {kMargin, 686, 1200, 30};
+
+Rect assignmentRow(int index) { return {kMargin, kAssignmentTop + index * kAssignmentRowHeight, 1200, 60}; }
+Rect assignmentPrevButton(int index) { return {560, assignmentRow(index).y, kAssignmentButtonWidth, 60}; }
+Rect assignmentValue(int index) { return {660, assignmentRow(index).y, 480, 60}; }
+Rect assignmentNextButton(int index) { return {1150, assignmentRow(index).y, kAssignmentButtonWidth, 60}; }
+
 Rect tabRect(int index) { return {kMargin + index * (kTabWidth + kTabGap), kTabTop, kTabWidth, kTabHeight}; }
 
 Rect wifiButtonRect(int slot) {
@@ -111,37 +135,47 @@ Rect keyRect(int index) {
           kKeypadTop + (index / kKeypadColumns) * (kKeyHeight + kKeyGap), kKeyWidth, kKeyHeight};
 }
 
-void drawLevelControl(const LevelControl& control, int level) {
+// [-] bar [+] showing `value` out of min..max, with `text` on the bar.
+void drawRangeControl(const LevelControl& control, int value, int min, int max, const char* text) {
   ui::drawButton(control.minus(), "－", ui::kColorGray, ui::kColorOnAccent, 40);
   ui::drawButton(control.plus(), "＋", ui::kColorGray, ui::kColorOnAccent, 40);
 
   const Rect bar = control.bar();
   ui::frame().fillRect(bar.x, bar.y, bar.w, bar.h, ui::kColorBackground);
   ui::frame().fillRoundRect(bar.x, bar.y, bar.w, bar.h, 10, ui::kColorPanel);
-  if (level > 0) {
-    ui::frame().fillRoundRect(bar.x, bar.y, bar.w * level / ui::kLevelMax, bar.h, 10, ui::kColorBlue);
+  if (value > min) {
+    ui::frame().fillRoundRect(bar.x, bar.y, bar.w * (value - min) / (max - min), bar.h, 10, ui::kColorBlue);
   }
+  ui::drawFittedText(text, bar, 44, 44, ui::kColorText);
+}
+
+void drawLevelControl(const LevelControl& control, int level) {
   char text[8];
   snprintf(text, sizeof(text), "%d", level);
-  ui::drawFittedText(text, bar, 44, 44, ui::kColorText);
+  drawRangeControl(control, level, 0, ui::kLevelMax, text);
 }
 
 void presentContent() { ui::present(kContentTop, ui::kScreenHeight - kContentTop); }
 
-// New level after a tap on a control, or -1 when the tap missed it. Tapping the bar jumps
-// straight to that position.
-int levelAfterTap(const LevelControl& control, int level, int x, int y) {
+// New value after a tap on a control, or nullopt when the tap missed it. Tapping the bar
+// jumps straight to that position. The result is not clamped.
+std::optional<int> valueAfterTap(const LevelControl& control, int value, int min, int max, int x, int y) {
   if (control.minus().contains(x, y)) {
-    return level - 1;
+    return value - 1;
   }
   if (control.plus().contains(x, y)) {
-    return level + 1;
+    return value + 1;
   }
   const Rect bar = control.bar();
   if (bar.contains(x, y)) {
-    return ((x - bar.x) * ui::kLevelMax + bar.w / 2) / bar.w;
+    return min + ((x - bar.x) * (max - min) + bar.w / 2) / bar.w;
   }
-  return -1;
+  return std::nullopt;
+}
+
+// New level after a tap on a control, or -1 when the tap missed it.
+int levelAfterTap(const LevelControl& control, int level, int x, int y) {
+  return valueAfterTap(control, level, 0, ui::kLevelMax, x, y).value_or(-1);
 }
 
 }  // namespace
@@ -186,6 +220,7 @@ void SettingsScreen::drawTabContent(const AppSnapshot& snapshot) {
     case Tab::Server: drawServerTab(snapshot); break;
     case Tab::Device: drawDeviceTab(); break;
     case Tab::Orientation: drawOrientationTab(); break;
+    case Tab::Gesture: drawGestureTab(); break;
   }
 }
 
@@ -195,6 +230,14 @@ void SettingsScreen::update(const AppSnapshot& snapshot) {
       (screen_orientation::sensed() != drawnSensed_ || ui::upsideDown() != drawnUpsideDown_)) {
     drawOrientationInfo();
     presentContent();
+  }
+  // Likewise what the camera sees, so a gesture can be tried out while assigning it.
+  if (tab_ == Tab::Gesture) {
+    const auto status = hand_gesture::status();
+    if (status.seen != drawnSeen_ || static_cast<int>(status.seenScore * 10) != drawnSeenScore_) {
+      drawGestureInfo();
+      presentContent();
+    }
   }
   if (snapshot.revision == drawnRevision_) {
     return;
@@ -231,6 +274,7 @@ SettingsScreen::Action SettingsScreen::handleTap(int x, int y, const AppSnapshot
     case Tab::Server: handleServerTap(x, y); break;
     case Tab::Device: handleDeviceTap(x, y); break;
     case Tab::Orientation: handleOrientationTap(x, y); break;
+    case Tab::Gesture: handleGestureTap(x, y); break;
   }
   // The handlers redraw only small pieces of the tab; one copy covers whichever they touched.
   presentContent();
@@ -244,7 +288,10 @@ void SettingsScreen::showMessage(const char* text, bool isError) {
 }
 
 void SettingsScreen::drawMessage() {
-  const Rect& area = tab_ == Tab::Wifi ? kWifiMessageArea : tab_ == Tab::Server ? kServerMessageArea : kBottomMessageArea;
+  const Rect& area = tab_ == Tab::Wifi      ? kWifiMessageArea
+                     : tab_ == Tab::Server  ? kServerMessageArea
+                     : tab_ == Tab::Gesture ? kGestureMessageArea
+                                            : kBottomMessageArea;
   ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
   ui::drawText(message_.c_str(), area.x, area.y + 4, 24, messageIsError_ ? ui::kColorRed : ui::kColorGreen);
 }
@@ -525,6 +572,129 @@ void SettingsScreen::handleOrientationTap(int x, int y) {
     if (!saved) {
       showMessage("設定を保存できませんでした（電源を切ると元に戻ります）", true);
     }
+    return;
+  }
+}
+
+// --- Gesture tab -----------------------------------------------------------------------
+
+void SettingsScreen::drawGestureTab() {
+  ui::drawText("カメラに手の形を見せて操作", kMargin, kContentTop + 24, 28, ui::kColorText);
+  ui::drawText(kHoldControl.title, kMargin, kHoldControl.top, 28, ui::kColorText);
+  drawGestureControls();
+  drawGestureInfo();
+}
+
+void SettingsScreen::drawGestureControls() {
+  const GestureSettings settings = hand_gesture::settings();
+  const bool camera = hand_gesture::cameraAvailable();
+
+  for (const bool on : {true, false}) {
+    const Rect& area = on ? kGestureOnButton : kGestureOffButton;
+    const bool active = settings.enabled == on;
+    ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+    ui::drawButton(area, on ? "使う" : "使わない", active ? ui::kColorBlue : ui::kColorPanel,
+                   active ? ui::kColorOnAccent : ui::kColorText, 32);
+  }
+
+  char holdText[16];
+  snprintf(holdText, sizeof(holdText), "%d.%d 秒", settings.holdMs / 1000, settings.holdMs / 100 % 10);
+  drawRangeControl(kHoldControl, settings.holdMs, heatboard::kMinHoldMs, heatboard::kMaxHoldMs, holdText);
+
+  for (int i = 0; i < heatboard::kBoardActionCount; ++i) {
+    const Rect row = assignmentRow(i);
+    ui::frame().fillRect(row.x, row.y, row.w, row.h, ui::kColorBackground);
+    ui::drawText(gesture_names::action(static_cast<BoardAction>(i)), row.x, row.y + 14, 28, ui::kColorText);
+    ui::drawButton(assignmentPrevButton(i), "◀", ui::kColorGray, ui::kColorOnAccent, 32);
+    ui::drawOutlinedRoundRect(assignmentValue(i), 10, ui::kColorGray, ui::kColorPanel);
+    const Gesture gesture = settings.assignment[i];
+    ui::drawFittedText(gesture_names::gesture(gesture), assignmentValue(i), 30, 20,
+                       gesture == Gesture::None ? ui::kColorMutedText : ui::kColorText);
+    ui::drawButton(assignmentNextButton(i), "▶", ui::kColorGray, ui::kColorOnAccent, 32);
+  }
+
+  if (!camera) {
+    showMessage("カメラが使えないため、ジェスチャー操作は動きません", true);
+  }
+}
+
+void SettingsScreen::drawGestureInfo() {
+  const Rect& area = kGestureInfoArea;
+  ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+  const auto status = hand_gesture::status();
+  drawnSeen_ = status.seen;
+  drawnSeenScore_ = static_cast<int>(status.seenScore * 10);
+
+  char line[160];
+  if (!hand_gesture::settings().enabled) {
+    snprintf(line, sizeof(line), "カメラの判定: （「使う」にすると表示されます）");
+  } else if (status.seen == Gesture::None) {
+    snprintf(line, sizeof(line), "カメラの判定: 手を認識していません（カメラから 0.5〜1.5m、手のひらを向けてください）");
+  } else {
+    snprintf(line, sizeof(line), "カメラの判定: %s（確信度 %d%%）", gesture_names::gesture(status.seen),
+             static_cast<int>(status.seenScore * 100));
+  }
+  ui::drawText(line, area.x, area.y + 4, 24, ui::kColorMutedText);
+}
+
+void SettingsScreen::saveGestureSettings(const GestureSettings& settings) {
+  hand_gesture::setSettings(settings);
+  drawGestureControls();
+  drawGestureInfo();
+  if (settings_store::saveGestureSettings(settings) != ESP_OK) {
+    showMessage("設定を保存できませんでした（電源を切ると元に戻ります）", true);
+  }
+}
+
+void SettingsScreen::handleGestureTap(int x, int y) {
+  GestureSettings settings = hand_gesture::settings();
+
+  if (kGestureOnButton.contains(x, y) || kGestureOffButton.contains(x, y)) {
+    const bool on = kGestureOnButton.contains(x, y);
+    if (on && !hand_gesture::cameraAvailable()) {
+      ui::beepRejected();
+      showMessage("カメラが使えないため、ジェスチャー操作は動きません", true);
+      return;
+    }
+    ui::beepAccepted();
+    if (on != settings.enabled) {
+      settings.enabled = on;
+      saveGestureSettings(settings);
+    }
+    return;
+  }
+
+  if (const auto hold = valueAfterTap(kHoldControl, settings.holdMs / kHoldStepMs, heatboard::kMinHoldMs / kHoldStepMs,
+                                      heatboard::kMaxHoldMs / kHoldStepMs, x, y)) {
+    const int clamped = std::clamp(*hold * kHoldStepMs, heatboard::kMinHoldMs, heatboard::kMaxHoldMs);
+    if (clamped == settings.holdMs) {
+      ui::beepRejected();
+      return;
+    }
+    settings.holdMs = clamped;
+    ui::beepAccepted();
+    saveGestureSettings(settings);
+    return;
+  }
+
+  for (int i = 0; i < heatboard::kBoardActionCount; ++i) {
+    const bool prev = assignmentPrevButton(i).contains(x, y);
+    const bool next = assignmentNextButton(i).contains(x, y);
+    if (!prev && !next) {
+      continue;
+    }
+    // Steps through the gestures, wrapping, skipping ones another action already uses.
+    int value = static_cast<int>(settings.assignment[i]);
+    for (int step = 0; step < heatboard::kGestureCount; ++step) {
+      value = (value + (next ? 1 : heatboard::kGestureCount - 1)) % heatboard::kGestureCount;
+      const Gesture candidate = static_cast<Gesture>(value);
+      if (candidate == Gesture::None || !settings.actionOf(candidate)) {
+        break;
+      }
+    }
+    settings.assignment[i] = static_cast<Gesture>(value);
+    ui::beepAccepted();
+    saveGestureSettings(settings);
     return;
   }
 }

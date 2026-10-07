@@ -1,12 +1,14 @@
-// Settings screen with four tabs: Wi-Fi preset selection, Raspberry Pi server address
-// (numeric keypad, plus pilot list reload), speaker volume / screen brightness, and screen
-// orientation (automatic from the accelerometer, or fixed by hand).
+// Settings screen with five tabs: Wi-Fi preset selection, Raspberry Pi server address
+// (numeric keypad, plus pilot list reload), speaker volume / screen brightness, screen
+// orientation (automatic from the accelerometer, or fixed by hand), and hand gesture
+// operation (on/off, hold time, which gesture does what).
 #pragma once
 
 #include <cstdint>
 #include <string>
 
 #include "app_state.h"
+#include "heatboard/gesture_control.h"
 #include "heatboard/orientation.h"
 
 class SettingsScreen {
@@ -22,7 +24,7 @@ class SettingsScreen {
   Action handleTap(int x, int y, const AppSnapshot& snapshot);
 
  private:
-  enum class Tab { Wifi, Server, Device, Orientation };
+  enum class Tab { Wifi, Server, Device, Orientation, Gesture };
 
   void selectTab(Tab tab, const AppSnapshot& snapshot);
   void drawTabBar();
@@ -50,6 +52,12 @@ class SettingsScreen {
   void drawOrientationInfo();
   void handleOrientationTap(int x, int y);
 
+  void drawGestureTab();
+  void drawGestureControls();
+  void drawGestureInfo();
+  void handleGestureTap(int x, int y);
+  void saveGestureSettings(const heatboard::GestureSettings& settings);
+
   Tab tab_ = Tab::Wifi;
   std::string addressText_;
   std::string message_;
@@ -58,4 +66,6 @@ class SettingsScreen {
   int drawnWifiSlot_ = -1;
   heatboard::Orientation drawnSensed_ = heatboard::Orientation::Normal;
   bool drawnUpsideDown_ = false;
+  heatboard::Gesture drawnSeen_ = heatboard::Gesture::None;
+  int drawnSeenScore_ = -1;  // tenths
 };

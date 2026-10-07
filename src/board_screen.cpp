@@ -8,6 +8,8 @@
 
 #include "app_config.h"
 #include "droras_client.h"
+#include "gesture_names.h"
+#include "hand_gesture.h"
 #include "heatboard/heat_window.h"
 #include "ui_common.h"
 
@@ -22,6 +24,9 @@ constexpr Rect kStatusBar = {0, 0, ui::kScreenWidth, 56};
 constexpr Rect kSettingsButton = {1116, 6, 152, 44};
 // Larger than the drawn button: the bar is thin and the button sits in a screen corner.
 constexpr Rect kSettingsTouchArea = {1080, 0, 200, 72};
+// A gesture being held towards a command: name and a bar filling up over the hold time.
+constexpr Rect kGestureIndicator = {720, 8, 380, 40};
+constexpr int kGestureSteps = 20;  // the bar is redrawn this many times over a hold
 
 constexpr Rect kTableHeader = {0, 60, ui::kScreenWidth, 44};
 constexpr int kOtherRowHeight = 84;
@@ -193,6 +198,20 @@ void BoardScreen::handleKey(char key, const AppSnapshot& snapshot) {
   }
 }
 
+void BoardScreen::perform(heatboard::BoardAction action, const AppSnapshot& snapshot) {
+  switch (action) {
+    case heatboard::BoardAction::StartStop: toggleStart(snapshot); break;
+    case heatboard::BoardAction::PreviousHeat:
+    case heatboard::BoardAction::NextHeat:
+      if (changeHeat(snapshot, action == heatboard::BoardAction::NextHeat)) {
+        ui::beepAccepted();
+      } else {
+        ui::beepRejected();
+      }
+      break;
+  }
+}
+
 BoardScreen::TableKey BoardScreen::tableKeyOf(const AppSnapshot& snapshot) {
   return {snapshot.heats.get(), snapshot.currentHeat, snapshot.wifi, snapshot.heatListStatus, snapshot.heatListError};
 }
@@ -251,38 +270,48 @@ void BoardScreen::update(const AppSnapshot& snapshot) {
   // The snapshot revision moves for every state change, most of which leave a given region
   // as it is; each region is repainted only when what it shows is different.
   bool tableChanged = false;
-  if (snapshot.revision != drawnRevision_) {
+  bool statusChanged = false;
+  const bool revisionChanged = snapshot.revision != drawnRevision_;
+  if (revisionChanged) {
     drawnRevision_ = snapshot.revision;
     uint32_t dot = 0;
-    if (statusOf(snapshot, dot) != drawnStatus_ || dot != drawnStatusDot_) {
-      drawStatusBar(snapshot);
-      ui::present(kStatusBar.y, kStatusBar.h);
-    }
-    if (!(tableKeyOf(snapshot) == drawnTable_)) {
-      const int64_t startedMs = nowMs();
-      PreparedTable* table = preparedFor(snapshot, snapshot.currentHeat);
-      if (table != nullptr) {
-        // Usually complete already; otherwise (a jump, or a tap before the preparation
-        // finished) the missing rows are drawn now.
-        while (table->rowsDrawn < kTableRows) {
-          drawNextRow(*table);
-        }
-        drawnTable_ = tableKeyOf(snapshot);
-      } else {
-        drawTable(snapshot);  // a message, or no memory for prepared tables
+    statusChanged = statusOf(snapshot, dot) != drawnStatus_ || dot != drawnStatusDot_;
+  }
+  // The gesture indicator in the status bar moves on its own clock.
+  const auto gesture = hand_gesture::status();
+  const int gestureStep =
+      gesture.holding == heatboard::Gesture::None ? -1 : static_cast<int>(gesture.progress * kGestureSteps);
+  if (gesture.holding != drawnGesture_ || gestureStep != drawnGestureStep_) {
+    statusChanged = true;
+  }
+  if (statusChanged) {
+    drawStatusBar(snapshot);
+    ui::present(kStatusBar.y, kStatusBar.h);
+  }
+  if (revisionChanged && !(tableKeyOf(snapshot) == drawnTable_)) {
+    const int64_t startedMs = nowMs();
+    PreparedTable* table = preparedFor(snapshot, snapshot.currentHeat);
+    if (table != nullptr) {
+      // Usually complete already; otherwise (a jump, or a tap before the preparation
+      // finished) the missing rows are drawn now.
+      while (table->rowsDrawn < kTableRows) {
+        drawNextRow(*table);
       }
-      const int64_t drawnMs = nowMs();
-      if (table != nullptr) {
-        table->canvas.present(kTableBodyTop, kTableBodyHeight);
-      } else {
-        ui::present(kTableBodyTop, kTableBodyHeight);
-      }
-      // Logged per change so that a slow switch shows up in the serial log: "drawn in" is
-      // 0 ms when the table was ready in advance.
-      ESP_LOGI(TAG, "heat %d: drawn in %d ms, copied to the panel in %d ms", snapshot.currentHeat,
-               static_cast<int>(drawnMs - startedMs), static_cast<int>(nowMs() - drawnMs));
-      tableChanged = true;
+      drawnTable_ = tableKeyOf(snapshot);
+    } else {
+      drawTable(snapshot);  // a message, or no memory for prepared tables
     }
+    const int64_t drawnMs = nowMs();
+    if (table != nullptr) {
+      table->canvas.present(kTableBodyTop, kTableBodyHeight);
+    } else {
+      ui::present(kTableBodyTop, kTableBodyHeight);
+    }
+    // Logged per change so that a slow switch shows up in the serial log: "drawn in" is
+    // 0 ms when the table was ready in advance.
+    ESP_LOGI(TAG, "heat %d: drawn in %d ms, copied to the panel in %d ms", snapshot.currentHeat,
+             static_cast<int>(drawnMs - startedMs), static_cast<int>(nowMs() - drawnMs));
+    tableChanged = true;
   }
   if (!tableChanged) {
     prepareNeighbours(snapshot);
@@ -309,6 +338,24 @@ void BoardScreen::drawStatusBar(const AppSnapshot& snapshot) {
   ui::drawButton(kSettingsButton, "設定", ui::kColorGray, ui::kColorOnAccent, 26);
   drawnStatus_ = text;
   drawnStatusDot_ = dot;
+
+  // A gesture being held: the action it will trigger, over a bar that fills up as the hold
+  // time runs; the operator sees what is about to happen and can drop the hand in time.
+  const auto gesture = hand_gesture::status();
+  drawnGesture_ = gesture.holding;
+  drawnGestureStep_ =
+      gesture.holding == heatboard::Gesture::None ? -1 : static_cast<int>(gesture.progress * kGestureSteps);
+  const auto action = hand_gesture::settings().actionOf(gesture.holding);
+  if (gesture.holding != heatboard::Gesture::None && action) {
+    const Rect& area = kGestureIndicator;
+    ui::drawOutlinedRoundRect(area, 8, ui::kColorBlue, ui::kColorBackground);
+    const int filled = static_cast<int>((area.w - 2) * gesture.progress);
+    if (filled > 0) {
+      ui::frame().fillRoundRect(area.x + 1, area.y + 1, filled, area.h - 2, 7, ui::kColorCurrentRow);
+    }
+    std::string label = std::string("手: ") + gesture_names::gesture(gesture.holding) + " → " + gesture_names::action(*action);
+    ui::drawFittedText(label.c_str(), area, 24, 16, ui::kColorText);
+  }
 }
 
 void BoardScreen::drawTableHeader() {

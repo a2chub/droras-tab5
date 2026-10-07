@@ -4,6 +4,7 @@ idf_component_register(
         "board_screen.cpp"
         "canvas.cpp"
         "debug_console.cpp"
+        "hand_gesture.cpp"
         "droras_client.cpp"
         "heat_sources.cpp"
         "http_client.cpp"
@@ -16,7 +17,8 @@ idf_component_register(
         "ui_common.cpp"
         "wifi_station.cpp"
     INCLUDE_DIRS "."
-    # Display font, read in place from flash by text_renderer.cpp. Must also be listed in
+    # Display font, read in place from flash by text_renderer.cpp, and Espressif's sample
+    # picture for the hand gesture models (debug console "camtest"). Must also be listed in
     # board_build.embed_files in platformio.ini, which is what PlatformIO acts on.
-    EMBED_FILES "../assets/fonts/ipaexg.ttf"
+    EMBED_FILES "../assets/fonts/ipaexg.ttf" "../assets/test/gesture.jpg"
 )
