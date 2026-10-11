@@ -49,3 +49,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.log
+
+# Editor side files: SpecStory keeps AI chat transcripts, which may quote secrets
+.specstory/
+.cursorindexingignore
