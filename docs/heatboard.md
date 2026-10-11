@@ -68,8 +68,9 @@ Wi-Fi の選択、サーバーアドレス、音量、明るさ、画面の向�
 | データ | 取得元 | 備考 |
 |---|---|---|
 | 選手リスト | GAS エンドポイント（CSV: `JDLid,name,class,heat`） | 起動時と「選手リストを再取得」で取得。失敗時は 2〜30 秒間隔で自動再試行 |
+| 選手リスト（RPi 経由） | droras の `heat_list` イベント（接続時と RPi 側の再読み込み時に届く） | 届いたら常に採用する。インターネットに出られない会場でも RPi に繋がれば選手名が出る |
 | 現在のヒート（優先） | RPi の droras（Socket.IO、`current_heat` イベント） | 即時反映。操作ボタンもこの接続を使う |
-| 現在のヒート（代替） | Firestore `race/current` の `heat`（REST、認証不要） | RPi に繋がらない間だけ 3 秒間隔でポーリング。表示専用 |
+| 現在のヒート（代替） | Firestore `race/current` の `heat`（REST、認証不要） | RPi に繋がらない間だけ 3 秒間隔でポーリング。表示専用。Firestore 自体に届かないときは間隔を 2 倍ずつ最大 60 秒まで延ばす |
 
 エンドポイントの URL と間隔は `src/app_config.h` にある。
 
@@ -89,10 +90,10 @@ src/
   gesture_names.h      手の形・操作の日本語名
   canvas.*             画面全体の裏バッファ（塗り・角丸・文字の合成・パネルへの転送）
   text_renderer.*      FreeType による文字描画（グリフキャッシュ付き）
-  network_task.*       通信全体を担うバックグラウンドタスク
+  network_task.*       通信を担う2つのタスク（LAN 側: Wi-Fi と RPi、インターネット側: GAS と Firestore）
   wifi_station.*       Wi-Fi（ESP32-C6 経由）とプリセット切り替え
   droras_client.*      RPi の droras との Socket.IO 接続
-  heat_sources.*       GAS の選手リスト取得、Firestore の現在ヒート取得
+  heat_sources.*       GAS の選手リスト取得、RPi から届いた選手リストの変換、Firestore の現在ヒート取得
   http_client.*        HTTPS GET（リダイレクト追従、接続の再利用）
   app_state.*          通信タスクと UI の間で共有する状態
   settings_store.*     NVS への設定保存
@@ -112,7 +113,7 @@ assets/test/gesture.jpg      Espressif の ESP-DL サンプル画像（`camtest`
 
 ## 既知の制約
 
-- 選手リストは GAS からのみ取得する。インターネットに出られない会場 LAN では、RPi に繋がっても選手名は表示できない。
+- 選手リストは GAS か RPi から取得する。インターネットに出られず RPi にも繋がらない状態では選手名は表示できない。
 - IPAex ゴシックに無い文字（例: 𠮷 U+20BB7）は表示されない。
 - droras 操作画面の「ヒートリスト再読み込み / 再ダウンロード / ログアップロード」に相当する
   RPi 側の操作は実装していない（設定画面の「選手リストを再取得」は Tab5 自身のリストを取り直すだけ）。

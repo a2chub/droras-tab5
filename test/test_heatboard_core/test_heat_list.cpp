@@ -2,6 +2,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <unity.h>
 
@@ -10,7 +11,10 @@
 
 using heatboard::Heat;
 using heatboard::HeatListParseResult;
+using heatboard::parseDrorasHeatRows;
 using heatboard::parseHeatListCsv;
+
+using Rows = std::vector<std::vector<std::string>>;
 
 namespace {
 
@@ -218,6 +222,73 @@ void test_csv_rejects_header_only() {
   assertRejected("JDLid,name,class,heat\n", "no heat rows");
 }
 
+// --- rows broadcast by the droras server ---------------------------------------------
+
+void test_droras_rows_real_shape() {
+  // What `heat_list` carries after the 4-pilot change: four names, the number, the class.
+  const Rows rows = {
+      {"西本 和希", "Ha Gaon", "三嶋 裕次郎", "Kim Haein", "1", "Novice"},
+      {"萩原 勝彦", "黒川 新介", "楠川 智久", "", "2", "Open"},
+      {"橋本 勇希", "山本 悠貴", "高野 奏多", "犬飼 大葵", "38", "決勝 Pro"},
+  };
+  const HeatListParseResult result = parseDrorasHeatRows(rows);
+  TEST_ASSERT_TRUE_MESSAGE(result.ok, result.error.c_str());
+  TEST_ASSERT_EQUAL(3, result.heats.size());
+  TEST_ASSERT_EQUAL(1, result.heats[0].number);
+  TEST_ASSERT_EQUAL_STRING("Novice", result.heats[0].className.c_str());
+  TEST_ASSERT_EQUAL(4, result.heats[0].pilots.size());
+  TEST_ASSERT_EQUAL_STRING("三嶋 裕次郎", result.heats[0].pilots[2].c_str());
+  TEST_ASSERT_EQUAL_STRING("", result.heats[1].pilots[3].c_str());  // vacant slot kept in place
+  TEST_ASSERT_EQUAL(38, result.heats[2].number);
+  TEST_ASSERT_EQUAL_STRING("決勝 Pro", result.heats[2].className.c_str());
+}
+
+void test_droras_rows_are_sorted_and_trimmed() {
+  const Rows rows = {
+      {" b ", "3", " Open "},
+      {"a", "1", "Novice"},
+  };
+  const HeatListParseResult result = parseDrorasHeatRows(rows);
+  TEST_ASSERT_TRUE_MESSAGE(result.ok, result.error.c_str());
+  TEST_ASSERT_EQUAL(1, result.heats[0].number);
+  TEST_ASSERT_EQUAL(3, result.heats[1].number);
+  TEST_ASSERT_EQUAL_STRING("b", result.heats[1].pilots[0].c_str());
+  TEST_ASSERT_EQUAL_STRING("Open", result.heats[1].className.c_str());
+}
+
+void test_droras_rows_pilot_count_follows_the_row() {
+  const Rows rows = {{"a", "b", "c", "7", "Expert"}};
+  const HeatListParseResult result = parseDrorasHeatRows(rows);
+  TEST_ASSERT_TRUE(result.ok);
+  TEST_ASSERT_EQUAL(3, result.heats[0].pilots.size());
+}
+
+void test_droras_rows_reject_short_row() {
+  const HeatListParseResult result = parseDrorasHeatRows({{"a", "b", "c", "1", "X"}, {"1", "X"}});
+  TEST_ASSERT_FALSE(result.ok);
+  TEST_ASSERT_TRUE(result.heats.empty());
+  TEST_ASSERT_EQUAL_STRING("row 2: expected at least 3 values, got 2", result.error.c_str());
+}
+
+void test_droras_rows_reject_bad_heat_number() {
+  TEST_ASSERT_FALSE(parseDrorasHeatRows({{"a", "x", "Open"}}).ok);
+  TEST_ASSERT_FALSE(parseDrorasHeatRows({{"a", "0", "Open"}}).ok);
+  TEST_ASSERT_FALSE(parseDrorasHeatRows({{"a", "1.5", "Open"}}).ok);
+  TEST_ASSERT_EQUAL_STRING("row 1: heat is not an integer >= 1", parseDrorasHeatRows({{"a", "-2", "Open"}}).error.c_str());
+}
+
+void test_droras_rows_reject_duplicate_heat() {
+  const HeatListParseResult result = parseDrorasHeatRows({{"a", "1", "Open"}, {"b", "1", "Open"}});
+  TEST_ASSERT_FALSE(result.ok);
+  TEST_ASSERT_EQUAL_STRING("row 2: heat 1 appears twice", result.error.c_str());
+}
+
+void test_droras_rows_reject_empty() {
+  const HeatListParseResult result = parseDrorasHeatRows({});
+  TEST_ASSERT_FALSE(result.ok);
+  TEST_ASSERT_EQUAL_STRING("no heat rows found", result.error.c_str());
+}
+
 }  // namespace
 
 void runHeatListTests() {
@@ -246,4 +317,11 @@ void runHeatListTests() {
   RUN_TEST(test_csv_rejects_text_after_closing_quote);
   RUN_TEST(test_csv_rejects_empty_input);
   RUN_TEST(test_csv_rejects_header_only);
+  RUN_TEST(test_droras_rows_real_shape);
+  RUN_TEST(test_droras_rows_are_sorted_and_trimmed);
+  RUN_TEST(test_droras_rows_pilot_count_follows_the_row);
+  RUN_TEST(test_droras_rows_reject_short_row);
+  RUN_TEST(test_droras_rows_reject_bad_heat_number);
+  RUN_TEST(test_droras_rows_reject_duplicate_heat);
+  RUN_TEST(test_droras_rows_reject_empty);
 }

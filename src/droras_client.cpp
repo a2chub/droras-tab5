@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 
 #include "app_state.h"
+#include "heat_sources.h"
 #include "heatboard/socketio_codec.h"
 
 namespace {
@@ -15,10 +16,10 @@ const char* TAG = "droras";
 constexpr int kWsOpcodeText = 0x1;
 constexpr int kSendTimeoutMs = 1000;
 
-// Only the short control and current_heat frames matter here. The heat_list frame the
-// server sends on connect is several kilobytes and unused (the pilot list comes from the
-// Apps Script endpoint), so anything longer is cut off and falls through as unknown.
-constexpr std::size_t kMaxFrameBytes = 256;
+// The heat_list frame the server sends on connect (and after a reload) is the largest: a
+// few kilobytes for a race day. Anything beyond this is cut off and falls through as an
+// unknown frame rather than being parsed half-way.
+constexpr std::size_t kMaxFrameBytes = 64 * 1024;
 
 // How long a heat change sent from here may wait for its broadcast before it is written
 // off (the connection probably dropped in between).
@@ -66,7 +67,8 @@ void DrorasClient::configure(const std::optional<heatboard::ServerAddress>& addr
   config.reconnect_timeout_ms = 3000;
   config.network_timeout_ms = 5000;
   config.buffer_size = 2048;
-  config.task_stack = 6144;
+  // The heat list is parsed on this task (cJSON plus the row conversion).
+  config.task_stack = 8192;
 
   esp_websocket_client_handle_t client = esp_websocket_client_init(&config);
   if (client == nullptr) {
@@ -175,6 +177,16 @@ void DrorasClient::onFrame(esp_websocket_client_handle_t client, const std::stri
           AppState::instance().setCurrentHeat(*heat, HeatSource::Rpi);
         } else {
           ESP_LOGW(TAG, "current_heat with unexpected payload: %s", packet.argsJson.c_str());
+        }
+      } else if (packet.eventName == "heat_list") {
+        // The server's own copy of the sheet. It is applied whenever it arrives: at a venue
+        // without internet access this is the only way to get the pilot names, and it is
+        // what the operator's web UI shows, so it is never older than what we could fetch.
+        heat_sources::HeatListResult list = heat_sources::parseDrorasHeatList(packet.argsJson);
+        if (list.heats) {
+          AppState::instance().setHeatList(std::move(list.heats), HeatListSource::Rpi);
+        } else {
+          AppState::instance().setHeatListFailed(std::move(list.error));
         }
       }
       break;

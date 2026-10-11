@@ -1,5 +1,6 @@
-// Background task that owns all network activity: Wi-Fi, the pilot list download, the
-// Raspberry Pi connection and the Firestore fallback.
+// Background tasks that own all network activity: one for the LAN side (Wi-Fi and the
+// Raspberry Pi connection), one for the internet side (pilot list download and the
+// Firestore fallback), so that the former is never held up by the latter timing out.
 #pragma once
 
 namespace network_task {

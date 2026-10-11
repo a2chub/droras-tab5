@@ -16,8 +16,11 @@ inline constexpr char kFirestoreCurrentHeatUrl[] =
 
 // Firestore is only polled while the Raspberry Pi is unreachable. The project's free tier
 // allows 50,000 document reads per day shared with the public site; 3s keeps one board
-// under 29,000 even if it falls back for a whole day.
+// under 29,000 even if it falls back for a whole day. While Firestore itself cannot be
+// reached (no internet at the venue) the interval backs off towards the maximum, so the
+// cloud task is not permanently stuck in connection timeouts.
 inline constexpr int kFirestorePollIntervalMs = 3000;
+inline constexpr int kFirestorePollMaxIntervalMs = 60000;
 inline constexpr int kFirestoreFailuresBeforeOffline = 3;
 
 inline constexpr int kHeatListRetryMinMs = 2000;

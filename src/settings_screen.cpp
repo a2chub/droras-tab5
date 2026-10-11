@@ -419,16 +419,17 @@ void SettingsScreen::drawServerInfo(const AppSnapshot& snapshot) {
   ui::drawText(line, area.x, area.y, 24, ui::kColorText);
 
   const unsigned heatCount = snapshot.heats ? static_cast<unsigned>(snapshot.heats->size()) : 0;
+  const char* source = snapshot.heatListSource == HeatListSource::Rpi ? "RPiから" : "スプレッドシートから";
   const int y = area.y + 38;
   if (!snapshot.heatListError.empty()) {
     // Shown even while an older list is still in use, so a failed reload is not silent.
-    snprintf(line, sizeof(line), "選手リスト: %u ヒート", heatCount);
+    snprintf(line, sizeof(line), "選手リスト: %u ヒート（%s）", heatCount, source);
     ui::drawText(line, area.x, y, 24, ui::kColorText);
     // The reason can be long; keep it out of the keypad next to this column.
     snprintf(line, sizeof(line), "取得エラー: %s", snapshot.heatListError.c_str());
     ui::drawText(line, area.x, y + 36, 20, ui::kColorRed, &area);
   } else if (snapshot.heats) {
-    snprintf(line, sizeof(line), "選手リスト: %u ヒート", heatCount);
+    snprintf(line, sizeof(line), "選手リスト: %u ヒート（%s）", heatCount, source);
     ui::drawText(line, area.x, y, 24, ui::kColorText);
   } else {
     ui::drawText("選手リスト: 未取得", area.x, y, 24, ui::kColorText);

@@ -39,12 +39,18 @@ void AppState::setHeatListLoading() {
   }
 }
 
-void AppState::setHeatList(HeatListPtr heats) {
+void AppState::setHeatList(HeatListPtr heats, HeatListSource source) {
   std::lock_guard<std::mutex> lock(mutex_);
   state_.heats = std::move(heats);
+  state_.heatListSource = source;
   state_.heatListStatus = HeatListStatus::Ready;
   state_.heatListError.clear();
   ++state_.revision;
+}
+
+bool AppState::hasHeatList() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return state_.heats != nullptr;
 }
 
 void AppState::setHeatListFailed(std::string error) {

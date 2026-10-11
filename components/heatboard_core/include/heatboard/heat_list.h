@@ -1,4 +1,5 @@
-// Heat list as published by the race organiser's Google Apps Script endpoint (CSV).
+// Heat list as published by the race organiser's Google Apps Script endpoint (CSV), or as
+// broadcast by the droras server.
 #pragma once
 
 #include <string>
@@ -25,5 +26,11 @@ struct HeatListParseResult {
 //
 // Records are one per line; a quoted field cannot contain a line break.
 HeatListParseResult parseHeatListCsv(std::string_view csv);
+
+// Builds the list from the rows of the droras server's `heat_list` event: one row per heat,
+// `[pilot, pilot, ..., heatNumber, className]`, with every value already rendered as text
+// (JSON numbers as their decimal digits). Pilots keep their order; "" is a vacant slot.
+// All-or-nothing like the CSV parser: a malformed or duplicated row fails the whole list.
+HeatListParseResult parseDrorasHeatRows(const std::vector<std::vector<std::string>>& rows);
 
 }  // namespace heatboard

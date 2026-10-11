@@ -152,4 +152,43 @@ HeatListParseResult parseHeatListCsv(std::string_view csv) {
   return result;
 }
 
+HeatListParseResult parseDrorasHeatRows(const std::vector<std::vector<std::string>>& rows) {
+  std::map<int, Heat> heatsByNumber;
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const std::vector<std::string>& row = rows[i];
+    const std::size_t rowNumber = i + 1;
+    // At least one pilot, the heat number and the class name.
+    if (row.size() < 3) {
+      return failure("row " + std::to_string(rowNumber) + ": expected at least 3 values, got " +
+                     std::to_string(row.size()));
+    }
+    const auto number = detail::parseWholeInteger<int>(detail::trimAscii(row[row.size() - 2]));
+    if (!number || *number < 1) {
+      return failure("row " + std::to_string(rowNumber) + ": heat is not an integer >= 1");
+    }
+    const auto [entry, isNewHeat] = heatsByNumber.try_emplace(*number);
+    if (!isNewHeat) {
+      return failure("row " + std::to_string(rowNumber) + ": heat " + std::to_string(*number) + " appears twice");
+    }
+    Heat& heat = entry->second;
+    heat.number = *number;
+    heat.className = std::string(detail::trimAscii(row.back()));
+    for (std::size_t p = 0; p + 2 < row.size(); ++p) {
+      heat.pilots.emplace_back(detail::trimAscii(row[p]));
+    }
+  }
+
+  if (heatsByNumber.empty()) {
+    return failure("no heat rows found");
+  }
+
+  HeatListParseResult result;
+  result.ok = true;
+  result.heats.reserve(heatsByNumber.size());
+  for (auto& entry : heatsByNumber) {
+    result.heats.push_back(std::move(entry.second));
+  }
+  return result;
+}
+
 }  // namespace heatboard

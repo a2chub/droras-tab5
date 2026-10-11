@@ -12,6 +12,7 @@
 
 enum class WifiStatus { NotConfigured, Failed, Connecting, Connected };
 enum class HeatListStatus { Waiting, Loading, Ready, Failed };
+enum class HeatListSource { None, Gas, Rpi };
 enum class RpiStatus { Disabled, Connecting, Connected };
 enum class HeatSource { None, Rpi, Firestore };
 
@@ -26,6 +27,7 @@ struct AppSnapshot {
   std::string ipAddress;
 
   HeatListStatus heatListStatus = HeatListStatus::Waiting;
+  HeatListSource heatListSource = HeatListSource::None;  // where `heats` came from
   std::string heatListError;
   HeatListPtr heats;
 
@@ -46,7 +48,8 @@ class AppState {
   void setWifi(WifiStatus status, std::string ipAddress);
   void setWifiSlot(int slot);
   void setHeatListLoading();
-  void setHeatList(HeatListPtr heats);
+  void setHeatList(HeatListPtr heats, HeatListSource source);
+  bool hasHeatList() const;
   void setHeatListFailed(std::string error);
   void setRpi(RpiStatus status, std::string address);
   void setCurrentHeat(int number, HeatSource source);
