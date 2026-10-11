@@ -155,6 +155,8 @@ tools/restore_release.sh v1.0.0 --full   # 設定ごと保存時点の状態に�
 
 書き込み前に Flash 全域（16MB）を `firmware_backup/tab5_factory_16MB.bin` に退避してある
 （git 管理外。SHA-256: `a260eda93e4e5ddc1d3abddd361b1eb326c07d4248b67d1b493feba057fde231`）。
+2台目（MAC `80:f1:b2:d1:40:d3`、2026-10-11 入手）の新品ダンプも同じ SHA-256 だったため、
+工場出荷イメージに個体固有のデータは含まれず、どの個体にもこのファイルで戻せる。
 
 ```sh
 uvx esptool --port /dev/cu.usbmodemXXXX write-flash 0 firmware_backup/tab5_factory_16MB.bin
