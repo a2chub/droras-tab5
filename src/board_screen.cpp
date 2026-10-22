@@ -11,6 +11,7 @@
 #include "gesture_names.h"
 #include "hand_gesture.h"
 #include "heatboard/heat_window.h"
+#include "text_renderer.h"
 #include "ui_common.h"
 
 namespace {
@@ -21,6 +22,7 @@ const char* TAG = "board";
 
 // --- Layout (1280x720) ---------------------------------------------------------------
 constexpr Rect kStatusBar = {0, 0, ui::kScreenWidth, 56};
+constexpr Rect kStatusTextArea = {52, 8, 480, 40};
 constexpr Rect kSettingsButton = {1116, 6, 152, 44};
 // Larger than the drawn button: the bar is thin and the button sits in a screen corner.
 constexpr Rect kSettingsTouchArea = {1080, 0, 200, 72};
@@ -224,7 +226,7 @@ std::string BoardScreen::statusOf(const AppSnapshot& snapshot, uint32_t& dot) {
     return "Wi-Fi未設定";
   }
   if (snapshot.wifi == WifiStatus::Failed) {
-    return "無線モジュールの初期化に失敗";
+    return "Wi-Fiに接続できません（設定を確認してください）";
   }
   if (snapshot.wifi == WifiStatus::Connecting) {
     return "Wi-Fiに接続中…";
@@ -233,7 +235,9 @@ std::string BoardScreen::statusOf(const AppSnapshot& snapshot, uint32_t& dot) {
     dot = ui::kColorGreen;
     return "RPiに接続中  " + snapshot.rpiAddress;
   }
-  const std::string rpi = snapshot.rpi == RpiStatus::Disabled ? "RPi未設定" : "RPi " + snapshot.rpiAddress + " に未接続";
+  const std::string rpi = snapshot.rpi == RpiStatus::Disabled ? "RPi未設定"
+                          : snapshot.rpi == RpiStatus::Unresponsive ? "RPi応答なし " + snapshot.rpiAddress
+                                                                   : "RPi " + snapshot.rpiAddress + " に未接続";
   if (snapshot.heatSource == HeatSource::Firestore) {
     dot = ui::kColorAmber;
     return "Firestoreから取得中（" + rpi + "）";
@@ -275,7 +279,8 @@ void BoardScreen::update(const AppSnapshot& snapshot) {
   if (revisionChanged) {
     drawnRevision_ = snapshot.revision;
     uint32_t dot = 0;
-    statusChanged = statusOf(snapshot, dot) != drawnStatus_ || dot != drawnStatusDot_;
+    statusChanged = statusOf(snapshot, dot) != drawnStatus_ || dot != drawnStatusDot_ ||
+                    !(ui::connectionIndicatorState(snapshot) == drawnConnectionIndicators_);
   }
   // The gesture indicator in the status bar moves on its own clock.
   const auto gesture = hand_gesture::status();
@@ -331,12 +336,16 @@ void BoardScreen::update(const AppSnapshot& snapshot) {
 
 void BoardScreen::drawStatusBar(const AppSnapshot& snapshot) {
   uint32_t dot = 0;
-  const std::string text = statusOf(snapshot, dot);
+  const std::string status = statusOf(snapshot, dot);
   ui::frame().fillRect(kStatusBar.x, kStatusBar.y, kStatusBar.w, kStatusBar.h, ui::kColorPanel);
   ui::frame().fillCircle(28, kStatusBar.centerY(), 10, dot);
-  ui::drawText(text.c_str(), 52, kStatusBar.centerY() - 13, 26, ui::kColorText);
+  const int size = text::fitSize(status.c_str(), kStatusTextArea.w, 26, 16);
+  ui::drawText(status.c_str(), kStatusTextArea.x, kStatusBar.centerY() - size / 2, size, ui::kColorText,
+               &kStatusTextArea);
+  drawnConnectionIndicators_ = ui::connectionIndicatorState(snapshot);
+  ui::drawConnectionIndicators(drawnConnectionIndicators_, 8, ui::kColorPanel);
   ui::drawButton(kSettingsButton, "設定", ui::kColorGray, ui::kColorOnAccent, 26);
-  drawnStatus_ = text;
+  drawnStatus_ = status;
   drawnStatusDot_ = dot;
 
   // A gesture being held: the action it will trigger, over a bar that fills up as the hold
@@ -381,10 +390,10 @@ void BoardScreen::drawTable(const AppSnapshot& snapshot) {
   if (!snapshot.heats) {
     switch (snapshot.wifi) {
       case WifiStatus::NotConfigured:
-        drawTableMessage("Wi-Fiが未設定です", "src/app_secrets.h にSSIDとパスワードを記入して、書き込み直してください");
+        drawTableMessage("Wi-Fiが未設定です", "設定 → Wi-Fi でSSIDとパスワードを入力して保存してください");
         return;
       case WifiStatus::Failed:
-        drawTableMessage("無線モジュールを初期化できませんでした", "電源を入れ直してください");
+        drawTableMessage("Wi-Fiに接続できませんでした", "設定 → Wi-Fiで入力内容を確認し、再接続してください");
         return;
       case WifiStatus::Connecting:
         drawTableMessage("Wi-Fiに接続しています…", nullptr);

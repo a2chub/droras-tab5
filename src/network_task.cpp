@@ -26,27 +26,26 @@ constexpr std::size_t kFirestoreMaxBytes = 4096;
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
-// Wi-Fi and the Raspberry Pi connection. Nothing here blocks for longer than a few
-// milliseconds, so a server address saved on the settings screen takes effect at once and
-// a Wi-Fi switch is not stuck behind an internet request that is timing out.
+// Wi-Fi and the Raspberry Pi connection run apart from internet requests. Socket
+// teardown can wait for an in-flight send, but no Firestore/GAS timeout blocks this task.
 void lanTask(void*) {
   AppState& state = AppState::instance();
   DrorasClient& droras = DrorasClient::instance();
 
   wifi_station::start();
-  bool drorasConfigured = false;
+  droras.configure(settings_store::loadServerAddress());
 
   while (true) {
-    // The stored address is first applied once Wi-Fi is up: before that every connection
-    // attempt fails and only fills the log. Later changes take effect immediately.
-    const bool reconfigureRequested = state.takeServerReconfigureRequest();
-    if ((reconfigureRequested && drorasConfigured) || (!drorasConfigured && wifi_station::isConnected())) {
+    // configure publishes the saved server immediately; poll waits for Wi-Fi before
+    // starting a socket, and retries initialization as well as protocol failures.
+    if (state.takeServerReconfigureRequest()) {
       droras.configure(settings_store::loadServerAddress());
-      drorasConfigured = true;
     }
     if (const auto slot = state.takeWifiSlotRequest()) {
       wifi_station::switchTo(*slot);
     }
+    wifi_station::poll();
+    droras.poll(wifi_station::isConnected());
     vTaskDelay(pdMS_TO_TICKS(100));
   }
 }

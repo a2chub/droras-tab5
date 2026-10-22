@@ -21,6 +21,19 @@ void AppState::setWifi(WifiStatus status, std::string ipAddress) {
   std::lock_guard<std::mutex> lock(mutex_);
   state_.wifi = status;
   state_.ipAddress = std::move(ipAddress);
+  if (status != WifiStatus::Connected) state_.wifiRssiDbm.reset();
+  ++state_.revision;
+}
+
+void AppState::setWifiRssi(std::optional<int> rssiDbm) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  // A radio query may finish after a disconnect event; never publish a stale sample.
+  if (state_.wifi != WifiStatus::Connected ||
+      (rssiDbm && (*rssiDbm >= 0 || *rssiDbm < -127))) {
+    rssiDbm.reset();
+  }
+  if (state_.wifiRssiDbm == rssiDbm) return;
+  state_.wifiRssiDbm = rssiDbm;
   ++state_.revision;
 }
 

@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include "app_state.h"
 #include "canvas.h"
 
 namespace ui {
@@ -39,6 +40,27 @@ struct Rect {
   int centerX() const { return x + w / 2; }
   int centerY() const { return y + h / 2; }
 };
+
+// Shared header region, before the board's gesture indicator at x=720.
+inline constexpr int kConnectionIndicatorsLeft = 544;
+inline constexpr int kConnectionIndicatorsWidth = 160;
+inline constexpr int kConnectionIndicatorsHeight = 40;
+
+// Only the values that change the icons: RSSI movement within one bar level does
+// not repaint the header. A disconnected Wi-Fi never leaves the server green.
+struct ConnectionIndicatorState {
+  WifiStatus wifi = WifiStatus::Connecting;
+  int wifiBars = 0;  // 1..4 when measured, -1 when connected but unknown
+  RpiStatus server = RpiStatus::Disabled;
+
+  bool operator==(const ConnectionIndicatorState& other) const {
+    return wifi == other.wifi && wifiBars == other.wifiBars && server == other.server;
+  }
+};
+
+int wifiSignalBars(int rssiDbm);
+ConnectionIndicatorState connectionIndicatorState(const AppSnapshot& snapshot);
+void drawConnectionIndicators(const ConnectionIndicatorState& state, int top, uint32_t background);
 
 // Allocates the off-screen frame and prepares the touch sounds. Call once after M5.begin(),
 // with the display already rotated to landscape. Aborts if the frame cannot be set up: the

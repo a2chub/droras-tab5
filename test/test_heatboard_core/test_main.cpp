@@ -11,7 +11,9 @@ int main() {
   runHeatWindowTests();
   runSocketIoCodecTests();
   runServerAddressTests();
+  runServerHeartbeatTests();
   runOrientationTests();
   runGestureControlTests();
+  runWifiProfileTests();
   return UNITY_END();
 }

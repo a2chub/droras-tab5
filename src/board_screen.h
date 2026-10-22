@@ -8,6 +8,7 @@
 #include "app_state.h"
 #include "canvas.h"
 #include "heatboard/gesture_control.h"
+#include "ui_common.h"
 
 class BoardScreen {
  public:
@@ -82,6 +83,7 @@ class BoardScreen {
   uint32_t drawnRevision_ = 0;
   std::string drawnStatus_;
   uint32_t drawnStatusDot_ = 0;
+  ui::ConnectionIndicatorState drawnConnectionIndicators_;
   heatboard::Gesture drawnGesture_ = heatboard::Gesture::None;  // gesture indicator in the status bar
   int drawnGestureStep_ = -1;
   TableKey drawnTable_;

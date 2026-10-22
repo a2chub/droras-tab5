@@ -13,7 +13,7 @@
 enum class WifiStatus { NotConfigured, Failed, Connecting, Connected };
 enum class HeatListStatus { Waiting, Loading, Ready, Failed };
 enum class HeatListSource { None, Gas, Rpi };
-enum class RpiStatus { Disabled, Connecting, Connected };
+enum class RpiStatus { Disabled, Connecting, Connected, Unresponsive };
 enum class HeatSource { None, Rpi, Firestore };
 
 // Immutable once published, so the UI can keep drawing from it without holding the lock.
@@ -25,6 +25,7 @@ struct AppSnapshot {
   WifiStatus wifi = WifiStatus::Connecting;
   int wifiSlot = -1;  // index of the Wi-Fi preset in use, -1 when none is configured
   std::string ipAddress;
+  std::optional<int> wifiRssiDbm;  // nullopt when disconnected or the radio cannot report it
 
   HeatListStatus heatListStatus = HeatListStatus::Waiting;
   HeatListSource heatListSource = HeatListSource::None;  // where `heats` came from
@@ -46,6 +47,7 @@ class AppState {
   uint32_t revision() const;
 
   void setWifi(WifiStatus status, std::string ipAddress);
+  void setWifiRssi(std::optional<int> rssiDbm);
   void setWifiSlot(int slot);
   void setHeatListLoading();
   void setHeatList(HeatListPtr heats, HeatListSource source);

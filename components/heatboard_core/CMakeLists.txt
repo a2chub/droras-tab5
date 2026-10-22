@@ -5,6 +5,8 @@ idf_component_register(
     "src/orientation.cpp"
     "src/gesture_control.cpp"
     "src/server_address.cpp"
+    "src/server_heartbeat.cpp"
     "src/socketio_codec.cpp"
+    "src/wifi_profile.cpp"
   INCLUDE_DIRS "include"
 )

@@ -10,6 +10,7 @@
 #include "heatboard/server_address.h"
 #include "screen_orientation.h"
 #include "settings_store.h"
+#include "text_renderer.h"
 #include "ui_common.h"
 #include "wifi_station.h"
 
@@ -25,6 +26,7 @@ using ui::Rect;
 // --- Layout (1280x720) ---------------------------------------------------------------
 constexpr Rect kBackButton = {1080, 12, 180, 64};
 constexpr int kTitleBarBottom = 88;
+constexpr int kConnectionHeaderTop = 24;
 
 constexpr int kTabCount = 6;
 constexpr const char* kTabLabels[kTabCount] = {"Wi-Fi", "サーバー", "音量・明るさ", "画面の向き", "ジェスチャー", "カメラ"};
@@ -35,7 +37,7 @@ constexpr int kTabWidth = (ui::kScreenWidth - 2 * kMargin - (kTabCount - 1) * kT
 constexpr int kTabHeight = 64;
 constexpr int kContentTop = kTabTop + kTabHeight + 8;
 
-// Wi-Fi tab: one large button per preset.
+// Wi-Fi tab: connect and edit controls for each saved profile.
 constexpr int kWifiButtonsTop = 224;
 constexpr int kWifiButtonWidth = 590;
 constexpr int kWifiButtonHeight = 110;
@@ -43,6 +45,28 @@ constexpr int kWifiButtonGap = 20;
 constexpr int kWifiButtonColumns = 2;
 constexpr Rect kWifiInfoArea = {kMargin, 484, 1200, 80};
 constexpr Rect kWifiMessageArea = {kMargin, 580, 1200, 36};
+
+// The editor replaces the Wi-Fi tab content, leaving the main tabs reachable.
+constexpr Rect kWifiSsidField = {200, 214, 1040, 54};
+constexpr Rect kWifiPasswordField = {200, 276, 840, 54};
+constexpr Rect kWifiRevealButton = {1060, 276, 180, 54};
+constexpr Rect kWifiSaveButton = {kMargin, 342, 320, 52};
+constexpr Rect kWifiCancelButton = {376, 342, 180, 52};
+constexpr Rect kWifiEditorMessageArea = {kMargin, 396, 1200, 30};
+constexpr int kWifiKeyboardTop = 432;
+constexpr int kWifiKeyWidth = 92;
+constexpr int kWifiKeyHeight = 46;
+constexpr int kWifiKeyGap = 8;
+constexpr int kWifiKeyboardRows = 4;
+constexpr int kWifiKeyboardColumns = 12;
+constexpr const char* kWifiKeys[kWifiKeyboardRows] = {
+    "1234567890-=", "qwertyuiop[]", "asdfghjkl;'\\", "zxcvbnm,./`"};
+constexpr const char* kWifiShiftKeys[kWifiKeyboardRows] = {
+    "!@#$%^&*()_+", "QWERTYUIOP{}", "ASDFGHJKL:\"|", "ZXCVBNM<>?~"};
+constexpr Rect kWifiShiftButton = {kMargin, 650, 300, 54};
+constexpr Rect kWifiSpaceButton = {356, 650, 350, 54};
+constexpr Rect kWifiDeleteButton = {722, 650, 250, 54};
+constexpr Rect kWifiClearButton = {988, 650, 252, 54};
 
 // Server tab: editor and actions on the left, keypad on the right.
 constexpr Rect kAddressField = {kMargin, 224, 580, 84};
@@ -131,6 +155,38 @@ Rect wifiButtonRect(int slot) {
           kWifiButtonHeight};
 }
 
+Rect wifiConnectRect(int slot) {
+  const Rect area = wifiButtonRect(slot);
+  return {area.x, area.y, area.w - 132, area.h};
+}
+
+Rect wifiEditRect(int slot) {
+  const Rect area = wifiButtonRect(slot);
+  return {area.x + area.w - 120, area.y, 120, area.h};
+}
+
+Rect wifiKeyRect(int row, int column) {
+  return {kMargin + column * (kWifiKeyWidth + kWifiKeyGap),
+          kWifiKeyboardTop + row * (kWifiKeyHeight + kWifiKeyGap), kWifiKeyWidth, kWifiKeyHeight};
+}
+
+void drawWifiInput(const Rect& area, const std::string& value, bool active, bool masked) {
+  ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+  ui::drawOutlinedRoundRect(area, 8, active ? ui::kColorBlue : ui::kColorLine, ui::kColorPanel);
+  std::string visible = masked ? std::string(value.size(), '*') : value;
+  if (active) visible += '|';
+  const Rect clip = {area.x + 12, area.y + 4, area.w - 24, area.h - 8};
+  const int x = clip.x - std::max(0, text::width(visible.c_str(), 28) - clip.w);
+  ui::drawText(visible.c_str(), x, area.y + 13, 28, ui::kColorText, &clip);
+}
+
+void eraseLastCodePoint(std::string& value) {
+  if (value.empty()) return;
+  std::size_t last = value.size() - 1;
+  while (last > 0 && (static_cast<unsigned char>(value[last]) & 0xC0) == 0x80) --last;
+  value.erase(last);
+}
+
 Rect orientationButtonRect(int index) {
   return {kMargin + index * (kOrientationButtonWidth + kOrientationButtonGap), kOrientationButtonsTop,
           kOrientationButtonWidth, kOrientationButtonHeight};
@@ -194,12 +250,48 @@ void SettingsScreen::show(const AppSnapshot& snapshot) {
   ui::frame().fillScreen(ui::kColorBackground);
   ui::drawText("設定", kMargin, 22, 40, ui::kColorText);
   ui::drawButton(kBackButton, "戻る", ui::kColorGray, ui::kColorOnAccent, 32);
+  drawConnectionHeader(snapshot);
   ui::frame().drawFastHLine(0, kTitleBarBottom, ui::kScreenWidth, ui::kColorLine);
   ui::present(0, kTabTop);
   selectTab(tab_, snapshot);
 }
 
+void SettingsScreen::drawConnectionHeader(const AppSnapshot& snapshot) {
+  drawnConnectionIndicators_ = ui::connectionIndicatorState(snapshot);
+  ui::drawConnectionIndicators(drawnConnectionIndicators_, kConnectionHeaderTop, ui::kColorBackground);
+}
+
+SettingsScreen::WifiInfoKey SettingsScreen::wifiInfoKeyOf(const AppSnapshot& snapshot) {
+  WifiInfoKey key;
+  key.status = snapshot.wifi;
+  if (snapshot.wifi == WifiStatus::Connecting || snapshot.wifi == WifiStatus::Connected) {
+    key.ssid = wifi_station::ssid(snapshot.wifiSlot);
+  }
+  if (snapshot.wifi == WifiStatus::Connected) {
+    key.address = snapshot.ipAddress;
+    key.rssiDbm = snapshot.wifiRssiDbm;
+  }
+  return key;
+}
+
+SettingsScreen::ServerInfoKey SettingsScreen::serverInfoKeyOf(const AppSnapshot& snapshot) {
+  ServerInfoKey key;
+  key.status = snapshot.rpi;
+  if (snapshot.rpi != RpiStatus::Disabled) {
+    key.address = snapshot.rpiAddress;
+    key.waitingForWifi = snapshot.wifi != WifiStatus::Connected;
+    // All server states use the same waiting text until Wi-Fi is connected.
+    if (key.waitingForWifi) key.status = RpiStatus::Connecting;
+  }
+  key.listError = snapshot.heatListError;
+  key.listAvailable = snapshot.heats != nullptr || !key.listError.empty();
+  key.heatCount = snapshot.heats ? static_cast<unsigned>(snapshot.heats->size()) : 0;
+  key.listFromRpi = key.listAvailable && snapshot.heatListSource == HeatListSource::Rpi;
+  return key;
+}
+
 void SettingsScreen::selectTab(Tab tab, const AppSnapshot& snapshot) {
+  discardWifiEdit();
   tab_ = tab;
   hand_gesture::setPreview(tab == Tab::Camera);
   drawnPreviewFrame_ = 0;
@@ -238,6 +330,15 @@ void SettingsScreen::drawTabContent(const AppSnapshot& snapshot) {
 }
 
 void SettingsScreen::update(const AppSnapshot& snapshot) {
+  // Keep the header live while editing credentials, without touching the draft.
+  if (!(ui::connectionIndicatorState(snapshot) == drawnConnectionIndicators_)) {
+    drawConnectionHeader(snapshot);
+    ui::present(kConnectionHeaderTop, ui::kConnectionIndicatorsHeight);
+  }
+  // Network updates must not paint connection buttons over the keyboard or drafts.
+  if (tab_ == Tab::Wifi && editingWifiSlot_ >= 0) {
+    return;
+  }
   // Follows the sensor live, so that turning the Tab5 shows what Auto would do.
   if (tab_ == Tab::Orientation &&
       (screen_orientation::sensed() != drawnSensed_ || ui::upsideDown() != drawnUpsideDown_)) {
@@ -261,18 +362,24 @@ void SettingsScreen::update(const AppSnapshot& snapshot) {
   if (tab_ == Tab::Wifi) {
     if (snapshot.wifiSlot != drawnWifiSlot_) {
       drawWifiButtons(snapshot.wifiSlot);
+      const int rows = (wifi_station::kNetworkSlots + kWifiButtonColumns - 1) / kWifiButtonColumns;
+      ui::present(kWifiButtonsTop, rows * (kWifiButtonHeight + kWifiButtonGap) - kWifiButtonGap);
     }
-    drawWifiInfo(snapshot);
-  } else if (tab_ == Tab::Server) {
+    if (!(wifiInfoKeyOf(snapshot) == drawnWifiInfo_)) {
+      drawWifiInfo(snapshot);
+      ui::present(kWifiInfoArea.y, kWifiInfoArea.h);
+    }
+  } else if (tab_ == Tab::Server && !(serverInfoKeyOf(snapshot) == drawnServerInfo_)) {
     drawServerInfo(snapshot);
+    ui::present(kServerInfoArea.y, kServerInfoArea.h);
   }
-  presentContent();
   drawnRevision_ = snapshot.revision;
 }
 
 SettingsScreen::Action SettingsScreen::handleTap(int x, int y, const AppSnapshot& snapshot) {
   if (kBackButton.contains(x, y)) {
     ui::beepAccepted();
+    discardWifiEdit();
     hand_gesture::setPreview(false);
     return Action::Close;
   }
@@ -306,18 +413,23 @@ void SettingsScreen::showMessage(const char* text, bool isError) {
 }
 
 void SettingsScreen::drawMessage() {
-  const Rect& area = tab_ == Tab::Wifi      ? kWifiMessageArea
+  const Rect& area = tab_ == Tab::Wifi      ? (editingWifiSlot_ >= 0 ? kWifiEditorMessageArea : kWifiMessageArea)
                      : tab_ == Tab::Server  ? kServerMessageArea
                      : tab_ == Tab::Gesture ? kGestureMessageArea
                                             : kBottomMessageArea;
   ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
-  ui::drawText(message_.c_str(), area.x, area.y + 4, 24, messageIsError_ ? ui::kColorRed : ui::kColorGreen);
+  ui::drawText(message_.c_str(), area.x, area.y + 4, editingWifiSlot_ >= 0 ? 20 : 24,
+               messageIsError_ ? ui::kColorRed : ui::kColorGreen, &area);
 }
 
 // --- Wi-Fi tab -----------------------------------------------------------------------
 
 void SettingsScreen::drawWifiTab(const AppSnapshot& snapshot) {
-  ui::drawText("接続するWi-Fiをタップして選択（登録は src/app_secrets.h）", kMargin, kContentTop + 12, 24,
+  if (editingWifiSlot_ >= 0) {
+    drawWifiEditor();
+    return;
+  }
+  ui::drawText("Wi-Fi名をタップして接続／「編集」でSSIDとパスワードを設定", kMargin, kContentTop + 12, 24,
                   ui::kColorMutedText);
   drawWifiButtons(snapshot.wifiSlot);
   drawWifiInfo(snapshot);
@@ -325,50 +437,71 @@ void SettingsScreen::drawWifiTab(const AppSnapshot& snapshot) {
 
 void SettingsScreen::drawWifiButtons(int activeSlot) {
   constexpr int kLabelSize = 44;
-  constexpr int kMinLabelSize = 20;
+  constexpr int kMinLabelSize = 14;
   for (int slot = 0; slot < wifi_station::kNetworkSlots; ++slot) {
-    const Rect area = wifiButtonRect(slot);
+    const Rect whole = wifiButtonRect(slot);
+    const Rect area = wifiConnectRect(slot);
+    ui::frame().fillRect(whole.x, whole.y, whole.w, whole.h, ui::kColorBackground);
+    ui::drawButton(wifiEditRect(slot), "編集", ui::kColorGray, ui::kColorOnAccent, 30);
     ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
-    if (wifi_station::ssid(slot)[0] == '\0') {
-      ui::drawOutlinedRoundRect(area, 14, ui::kColorDisabled, ui::kColorBackground);
-      ui::drawFittedText("未登録", area, kLabelSize, kMinLabelSize, ui::kColorDisabled);
+    if (wifi_station::ssid(slot).empty()) {
+      ui::drawOutlinedRoundRect(area, 14, ui::kColorLine, ui::kColorBackground);
+      ui::drawFittedText("未登録・タップして設定", area, 30, kMinLabelSize, ui::kColorMutedText);
       continue;
     }
     const bool active = slot == activeSlot;
     ui::frame().fillRoundRect(area.x, area.y, area.w, area.h, 14, active ? ui::kColorBlue : ui::kColorPanel);
-    ui::drawFittedText(wifi_station::label(slot), area, kLabelSize, kMinLabelSize,
+    ui::drawFittedText(wifi_station::label(slot).c_str(), area, kLabelSize, kMinLabelSize,
                        active ? ui::kColorOnAccent : ui::kColorText);
   }
   drawnWifiSlot_ = activeSlot;
 }
 
 void SettingsScreen::drawWifiInfo(const AppSnapshot& snapshot) {
+  drawnWifiInfo_ = wifiInfoKeyOf(snapshot);
   const Rect& area = kWifiInfoArea;
   ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
 
   char line[128];
-  const char* ssid = wifi_station::ssid(snapshot.wifiSlot);
+  const auto ssid = wifi_station::ssid(snapshot.wifiSlot);
   switch (snapshot.wifi) {
     case WifiStatus::NotConfigured: snprintf(line, sizeof(line), "状態: Wi-Fiが1件も登録されていません"); break;
-    case WifiStatus::Failed: snprintf(line, sizeof(line), "状態: 無線モジュールの初期化に失敗"); break;
-    case WifiStatus::Connecting: snprintf(line, sizeof(line), "状態: %s に接続中…", ssid); break;
+    case WifiStatus::Failed: snprintf(line, sizeof(line), "接続できません。設定を確認し、再接続してください"); break;
+    case WifiStatus::Connecting: snprintf(line, sizeof(line), "状態: %s に接続中…", ssid.c_str()); break;
     case WifiStatus::Connected:
-      snprintf(line, sizeof(line), "状態: %s に接続済み／このTab5のIPアドレス %s", ssid, snapshot.ipAddress.c_str());
+      snprintf(line, sizeof(line), "状態: %s に接続済み／このTab5のIPアドレス %s", ssid.c_str(), snapshot.ipAddress.c_str());
       break;
   }
-  ui::drawText(line, area.x, area.y, 28, ui::kColorText);
-  ui::drawText("Tab5が対応するのは2.4GHz帯のWi-Fiのみです", area.x, area.y + 44, 20, ui::kColorMutedText);
+  ui::drawText(line, area.x, area.y, text::fitSize(line, area.w, 28, 18), ui::kColorText, &area);
+  if (snapshot.wifi == WifiStatus::Connected && snapshot.wifiRssiDbm) {
+    const char* strength[] = {"", "弱い", "弱め", "良好", "強い"};
+    snprintf(line, sizeof(line), "電波: %d dBm（%s）／Tab5は2.4GHz帯のWi-Fiに対応", *snapshot.wifiRssiDbm,
+             strength[ui::wifiSignalBars(*snapshot.wifiRssiDbm)]);
+  } else {
+    snprintf(line, sizeof(line), "電波: %s／Tab5は2.4GHz帯のWi-Fiに対応",
+             snapshot.wifi == WifiStatus::Connected ? "測定待ち" : "未接続");
+  }
+  ui::drawText(line, area.x, area.y + 44, 20, ui::kColorMutedText, &area);
 }
 
 void SettingsScreen::handleWifiTap(int x, int y, const AppSnapshot& snapshot) {
+  if (editingWifiSlot_ >= 0) {
+    handleWifiEditorTap(x, y, snapshot);
+    return;
+  }
   for (int slot = 0; slot < wifi_station::kNetworkSlots; ++slot) {
-    if (!wifiButtonRect(slot).contains(x, y)) {
+    if (wifiEditRect(slot).contains(x, y)) {
+      ui::beepAccepted();
+      beginWifiEdit(slot);
+      return;
+    }
+    if (!wifiConnectRect(slot).contains(x, y)) {
       continue;
     }
-    if (wifi_station::ssid(slot)[0] == '\0') {
-      ui::beepRejected();
-      showMessage("このボタンにはWi-Fiが登録されていません", true);
-    } else if (slot == snapshot.wifiSlot) {
+    if (wifi_station::ssid(slot).empty()) {
+      ui::beepAccepted();
+      beginWifiEdit(slot);
+    } else if (slot == snapshot.wifiSlot && snapshot.wifi == WifiStatus::Connected) {
       ui::beepAccepted();
       showMessage("このWi-Fiを使用中です", false);
     } else {
@@ -379,6 +512,171 @@ void SettingsScreen::handleWifiTap(int x, int y, const AppSnapshot& snapshot) {
     }
     return;
   }
+}
+
+void SettingsScreen::beginWifiEdit(int slot) {
+  discardWifiEdit();
+  editingWifiSlot_ = slot;
+  wifiDraft_ = wifi_station::profile(slot);
+  message_.clear();
+  messageIsError_ = false;
+  drawWifiEditor();
+}
+
+void SettingsScreen::discardWifiEdit() {
+  // Drop unsaved edits when leaving the editor; never reopen with a revealed password.
+  std::fill(wifiDraft_.password.begin(), wifiDraft_.password.end(), '\0');
+  wifiDraft_.password.clear();
+  wifiDraft_.ssid.clear();
+  editingWifiSlot_ = -1;
+  editingWifiPassword_ = false;
+  wifiPasswordVisible_ = false;
+  wifiKeyboardShift_ = false;
+}
+
+void SettingsScreen::drawWifiEditor() {
+  ui::frame().fillRect(0, kContentTop, ui::kScreenWidth, ui::kScreenHeight - kContentTop, ui::kColorBackground);
+  char title[128];
+  snprintf(title, sizeof(title), "Wi-Fi %d の編集 — 入力欄をタップして英数字・記号を入力", editingWifiSlot_ + 1);
+  ui::drawText(title, kMargin, kContentTop + 8, 22, ui::kColorMutedText);
+  drawWifiFields();
+  ui::drawButton(kWifiSaveButton, "保存して接続", ui::kColorGreen, ui::kColorOnAccent, 28);
+  ui::drawButton(kWifiCancelButton, "キャンセル", ui::kColorGray, ui::kColorOnAccent, 26);
+  ui::drawText("パスワード：8〜63文字／64桁の16進数／空欄可", 576, 348, 20, ui::kColorMutedText);
+  ui::drawText("保存した設定は電源を切っても保持されます", 576, 372, 18, ui::kColorMutedText);
+  drawWifiKeyboard();
+  drawMessage();
+}
+
+void SettingsScreen::drawWifiFields() {
+  ui::frame().fillRect(kMargin, 214, 150, 116, ui::kColorBackground);
+  ui::drawText("SSID", kMargin, 216, 24, ui::kColorText);
+  ui::drawText("パスワード", kMargin, 278, 24, ui::kColorText);
+  char length[32];
+  snprintf(length, sizeof(length), "%u / 32 バイト", static_cast<unsigned>(wifiDraft_.ssid.size()));
+  ui::drawText(length, kMargin, 246, 16, ui::kColorMutedText);
+  snprintf(length, sizeof(length), "%u / 64 文字", static_cast<unsigned>(wifiDraft_.password.size()));
+  ui::drawText(length, kMargin, 308, 16, ui::kColorMutedText);
+  drawWifiInput(kWifiSsidField, wifiDraft_.ssid, !editingWifiPassword_, false);
+  drawWifiInput(kWifiPasswordField, wifiDraft_.password, editingWifiPassword_, !wifiPasswordVisible_);
+  ui::frame().fillRect(kWifiRevealButton.x, kWifiRevealButton.y, kWifiRevealButton.w, kWifiRevealButton.h,
+                       ui::kColorBackground);
+  ui::drawButton(kWifiRevealButton, wifiPasswordVisible_ ? "隠す" : "表示", ui::kColorGray, ui::kColorOnAccent, 26);
+}
+
+void SettingsScreen::drawWifiKeyboard() {
+  for (int row = 0; row < kWifiKeyboardRows; ++row) {
+    const char* keys = wifiKeyboardShift_ ? kWifiShiftKeys[row] : kWifiKeys[row];
+    for (int column = 0; column < kWifiKeyboardColumns && keys[column] != '\0'; ++column) {
+      const Rect area = wifiKeyRect(row, column);
+      const char label[] = {keys[column], '\0'};
+      ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
+      ui::drawButton(area, label, ui::kColorPanel, ui::kColorText, 30);
+    }
+  }
+  ui::frame().fillRect(kMargin, kWifiShiftButton.y, 1200, kWifiShiftButton.h, ui::kColorBackground);
+  ui::drawButton(kWifiShiftButton, wifiKeyboardShift_ ? "小文字・数字へ" : "大文字・記号へ",
+                 wifiKeyboardShift_ ? ui::kColorBlue : ui::kColorGray, ui::kColorOnAccent, 26);
+  ui::drawButton(kWifiSpaceButton, "空白", ui::kColorPanel, ui::kColorText, 28);
+  ui::drawButton(kWifiDeleteButton, "1文字削除", ui::kColorPanel, ui::kColorText, 26);
+  ui::drawButton(kWifiClearButton, "入力欄をクリア", ui::kColorPanel, ui::kColorText, 24);
+}
+
+void SettingsScreen::handleWifiEditorTap(int x, int y, const AppSnapshot& snapshot) {
+  if (kWifiCancelButton.contains(x, y)) {
+    discardWifiEdit();
+    message_.clear();
+    drawTabContent(snapshot);
+    ui::beepAccepted();
+    return;
+  }
+  if (kWifiSaveButton.contains(x, y)) {
+    saveWifiProfile(snapshot);
+    return;
+  }
+  if (kWifiSsidField.contains(x, y) || kWifiPasswordField.contains(x, y)) {
+    editingWifiPassword_ = kWifiPasswordField.contains(x, y);
+    drawWifiFields();
+    ui::beepAccepted();
+    return;
+  }
+  if (kWifiRevealButton.contains(x, y)) {
+    wifiPasswordVisible_ = !wifiPasswordVisible_;
+    drawWifiFields();
+    ui::beepAccepted();
+    return;
+  }
+  if (kWifiShiftButton.contains(x, y)) {
+    wifiKeyboardShift_ = !wifiKeyboardShift_;
+    drawWifiKeyboard();
+    ui::beepAccepted();
+    return;
+  }
+
+  std::string& input = editingWifiPassword_ ? wifiDraft_.password : wifiDraft_.ssid;
+  if (kWifiDeleteButton.contains(x, y) || kWifiClearButton.contains(x, y)) {
+    if (input.empty()) {
+      ui::beepRejected();
+      return;
+    }
+    if (kWifiClearButton.contains(x, y)) {
+      std::fill(input.begin(), input.end(), '\0');
+      input.clear();
+    } else {
+      eraseLastCodePoint(input);
+    }
+  } else {
+    char key = kWifiSpaceButton.contains(x, y) ? ' ' : '\0';
+    for (int row = 0; row < kWifiKeyboardRows && key == '\0'; ++row) {
+      const char* keys = wifiKeyboardShift_ ? kWifiShiftKeys[row] : kWifiKeys[row];
+      for (int column = 0; column < kWifiKeyboardColumns && keys[column] != '\0'; ++column) {
+        if (wifiKeyRect(row, column).contains(x, y)) {
+          key = keys[column];
+          break;
+        }
+      }
+    }
+    if (key == '\0') return;
+    const std::size_t maximum = editingWifiPassword_ ? heatboard::kWifiPasswordMaxBytes : heatboard::kWifiSsidMaxBytes;
+    if (input.size() >= maximum) {
+      ui::beepRejected();
+      showMessage(editingWifiPassword_ ? "パスワードは最大64文字です" : "SSIDは最大32バイトです", true);
+      return;
+    }
+    input.push_back(key);
+  }
+  message_.clear();
+  drawMessage();
+  drawWifiFields();
+  ui::beepAccepted();
+}
+
+void SettingsScreen::saveWifiProfile(const AppSnapshot& snapshot) {
+  const char* error = nullptr;
+  switch (heatboard::validateWifiProfile(wifiDraft_)) {
+    case heatboard::WifiProfileError::None: break;
+    case heatboard::WifiProfileError::EmptySsid: error = "SSIDを入力してください"; break;
+    case heatboard::WifiProfileError::SsidTooLong: error = "SSIDは32バイト以内で入力してください"; break;
+    case heatboard::WifiProfileError::InvalidSsid: error = "SSIDに使用できない文字が含まれています"; break;
+    case heatboard::WifiProfileError::InvalidPassword:
+      error = "パスワードは半角8〜63文字、64桁の16進数、または空欄にしてください";
+      break;
+  }
+  if (error != nullptr) {
+    ui::beepRejected();
+    showMessage(error, true);
+    return;
+  }
+  if (wifi_station::saveProfile(editingWifiSlot_, wifiDraft_) != ESP_OK) {
+    ui::beepRejected();
+    showMessage("保存できませんでした。入力内容を保持しています。再度保存してください", true);
+    return;
+  }
+  AppState::instance().requestWifiSlot(editingWifiSlot_);
+  discardWifiEdit();
+  drawTabContent(snapshot);
+  ui::beepAccepted();
+  showMessage("保存しました。Wi-Fiへの接続を開始します", false);
 }
 
 // --- Server tab ----------------------------------------------------------------------
@@ -407,6 +705,7 @@ void SettingsScreen::drawAddressField() {
 }
 
 void SettingsScreen::drawServerInfo(const AppSnapshot& snapshot) {
+  drawnServerInfo_ = serverInfoKeyOf(snapshot);
   const Rect& area = kServerInfoArea;
   ui::frame().fillRect(area.x, area.y, area.w, area.h, ui::kColorBackground);
 
@@ -415,24 +714,42 @@ void SettingsScreen::drawServerInfo(const AppSnapshot& snapshot) {
     case RpiStatus::Disabled: snprintf(line, sizeof(line), "RPi: 未設定（Firestoreのみ使用）"); break;
     case RpiStatus::Connecting: snprintf(line, sizeof(line), "RPi: %s に未接続", snapshot.rpiAddress.c_str()); break;
     case RpiStatus::Connected: snprintf(line, sizeof(line), "RPi: %s に接続中", snapshot.rpiAddress.c_str()); break;
+    case RpiStatus::Unresponsive: snprintf(line, sizeof(line), "RPi: %s 応答なし", snapshot.rpiAddress.c_str()); break;
   }
-  ui::drawText(line, area.x, area.y, 24, ui::kColorText);
+  if (snapshot.rpi != RpiStatus::Disabled && snapshot.wifi != WifiStatus::Connected) {
+    snprintf(line, sizeof(line), "RPi: %s Wi-Fi接続待ち", snapshot.rpiAddress.c_str());
+  }
+  ui::drawText(line, area.x, area.y, text::fitSize(line, area.w, 22, 16), ui::kColorText, &area);
+
+  const char* health = "生存確認: 未設定";
+  uint32_t healthColor = ui::kColorMutedText;
+  if (snapshot.rpi != RpiStatus::Disabled && snapshot.wifi != WifiStatus::Connected) {
+    health = "生存確認: Wi-Fi接続待ち";
+  } else {
+    switch (snapshot.rpi) {
+      case RpiStatus::Disabled: break;
+      case RpiStatus::Connecting: health = "生存確認: 応答待ち"; healthColor = ui::kColorAmber; break;
+      case RpiStatus::Connected: health = "生存確認: 直近の応答あり"; healthColor = ui::kColorGreen; break;
+      case RpiStatus::Unresponsive: health = "生存確認: 応答がありません"; healthColor = ui::kColorRed; break;
+    }
+  }
+  ui::drawText(health, area.x, area.y + 28, 18, healthColor, &area);
 
   const unsigned heatCount = snapshot.heats ? static_cast<unsigned>(snapshot.heats->size()) : 0;
   const char* source = snapshot.heatListSource == HeatListSource::Rpi ? "RPiから" : "スプレッドシートから";
-  const int y = area.y + 38;
+  const int y = area.y + 54;
   if (!snapshot.heatListError.empty()) {
     // Shown even while an older list is still in use, so a failed reload is not silent.
     snprintf(line, sizeof(line), "選手リスト: %u ヒート（%s）", heatCount, source);
-    ui::drawText(line, area.x, y, 24, ui::kColorText);
+    ui::drawText(line, area.x, y, 20, ui::kColorText, &area);
     // The reason can be long; keep it out of the keypad next to this column.
     snprintf(line, sizeof(line), "取得エラー: %s", snapshot.heatListError.c_str());
-    ui::drawText(line, area.x, y + 36, 20, ui::kColorRed, &area);
+    ui::drawText(line, area.x, y + 28, 18, ui::kColorRed, &area);
   } else if (snapshot.heats) {
     snprintf(line, sizeof(line), "選手リスト: %u ヒート（%s）", heatCount, source);
-    ui::drawText(line, area.x, y, 24, ui::kColorText);
+    ui::drawText(line, area.x, y, 20, ui::kColorText, &area);
   } else {
-    ui::drawText("選手リスト: 未取得", area.x, y, 24, ui::kColorText);
+    ui::drawText("選手リスト: 未取得", area.x, y, 20, ui::kColorText, &area);
   }
 }
 
@@ -802,7 +1119,7 @@ void SettingsScreen::drawCameraInfo() {
 
   // The hold towards a trigger, like the bar on the board.
   const Rect& bar = kCameraHoldBar;
-  ui::drawText(settings.enabled ? "確定まで" : "確定まで（操作は「使わない」）", area.x, bar.y - 30, 20,
+  ui::drawText(settings.enabled ? "確定まで" : "確定まで（操作無効）", area.x, bar.y - 30, 20,
                ui::kColorMutedText, &area);
   ui::drawOutlinedRoundRect(bar, 8, ui::kColorGray, ui::kColorPanel);
   const int filled = static_cast<int>((bar.w - 2) * status.progress);

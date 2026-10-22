@@ -119,8 +119,9 @@ extern "C" void app_main(void) {
     }
 
     if (tapped) {
-      ESP_LOGI(TAG, "tap x=%d y=%d", tapX, tapY);
       if (screen == Screen::Board) {
+        // Settings keyboard coordinates can reveal a password; never log those taps.
+        ESP_LOGI(TAG, "tap x=%d y=%d", tapX, tapY);
         if (board.handleTap(tapX, tapY, snapshot) == BoardScreen::Action::OpenSettings) {
           screen = Screen::Settings;
           settings.show(snapshot);

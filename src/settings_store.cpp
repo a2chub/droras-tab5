@@ -1,6 +1,7 @@
 #include "settings_store.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
 
 #include "esp_log.h"
@@ -15,6 +16,8 @@ const char* TAG = "settings";
 const char* kNamespace = "heatboard";
 const char* kServerAddressKey = "rpi_addr";
 const char* kWifiSlotKey = "wifi_slot";
+const char* kWifiProfileKeys[heatboard::kWifiNetworkSlots] = {
+    "wifi_profile0", "wifi_profile1", "wifi_profile2", "wifi_profile3"};
 const char* kVolumeKey = "volume";
 const char* kBrightnessKey = "brightness";
 const char* kOrientationModeKey = "orient_mode";
@@ -133,6 +136,52 @@ esp_err_t saveServerAddress(const std::optional<heatboard::ServerAddress>& addre
 
 std::optional<int> loadWifiSlot() { return loadSmallInt(kWifiSlotKey); }
 esp_err_t saveWifiSlot(int slot) { return saveSmallInt(kWifiSlotKey, slot); }
+
+std::optional<heatboard::WifiProfile> loadWifiProfile(int slot) {
+  if (slot < 0 || slot >= heatboard::kWifiNetworkSlots) return std::nullopt;
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGE(TAG, "opening Wi-Fi profile failed: %s", esp_err_to_name(err));
+    }
+    return std::nullopt;
+  }
+
+  std::array<uint8_t, heatboard::kWifiProfileBlobMaxBytes> data{};
+  size_t size = data.size();
+  err = nvs_get_blob(handle, kWifiProfileKeys[slot], data.data(), &size);
+  nvs_close(handle);
+  if (err != ESP_OK) {
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGW(TAG, "reading Wi-Fi profile %d failed: %s", slot, esp_err_to_name(err));
+    }
+    return std::nullopt;
+  }
+  auto profile = heatboard::decodeWifiProfile(data.data(), size);
+  if (!profile) ESP_LOGW(TAG, "stored Wi-Fi profile %d is invalid, ignoring", slot);
+  return profile;
+}
+
+esp_err_t saveWifiProfile(int slot, const heatboard::WifiProfile& profile) {
+  if (slot < 0 || slot >= heatboard::kWifiNetworkSlots) return ESP_ERR_INVALID_ARG;
+  const auto data = heatboard::encodeWifiProfile(profile);
+  if (!data) return ESP_ERR_INVALID_ARG;
+
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (err == ESP_OK) {
+    // NVS writes the pair as one blob: an interrupted replacement cannot combine
+    // a new SSID with the previous password (or the reverse).
+    err = nvs_set_blob(handle, kWifiProfileKeys[slot], data->data(), data->size());
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "saving Wi-Fi profile %d failed: %s", slot, esp_err_to_name(err));
+  }
+  return err;
+}
 
 std::optional<int> loadVolumeLevel() { return loadSmallInt(kVolumeKey); }
 esp_err_t saveVolumeLevel(int level) { return saveSmallInt(kVolumeKey, level); }

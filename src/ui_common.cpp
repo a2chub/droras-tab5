@@ -123,6 +123,68 @@ void drawOutlinedRoundRect(const Rect& area, int radius, uint32_t border, uint32
   frame().fillRoundRect(area.x + 1, area.y + 1, area.w - 2, area.h - 2, radius - 1, fill);
 }
 
+int wifiSignalBars(int rssiDbm) {
+  if (rssiDbm >= -55) return 4;
+  if (rssiDbm >= -65) return 3;
+  if (rssiDbm >= -75) return 2;
+  return 1;
+}
+
+ConnectionIndicatorState connectionIndicatorState(const AppSnapshot& snapshot) {
+  ConnectionIndicatorState state;
+  state.wifi = snapshot.wifi;
+  if (snapshot.wifi == WifiStatus::Connected) {
+    state.wifiBars = snapshot.wifiRssiDbm ? wifiSignalBars(*snapshot.wifiRssiDbm) : -1;
+  }
+  state.server = snapshot.rpi;
+  if (snapshot.wifi != WifiStatus::Connected && state.server == RpiStatus::Connected) {
+    state.server = RpiStatus::Connecting;
+  }
+  return state;
+}
+
+void drawConnectionIndicators(const ConnectionIndicatorState& state, int top, uint32_t background) {
+  const int left = kConnectionIndicatorsLeft;
+  frame().fillRect(left, top, kConnectionIndicatorsWidth, kConnectionIndicatorsHeight, background);
+
+  uint32_t wifiColor = kColorMutedText;
+  const char* wifiMark = "−";
+  switch (state.wifi) {
+    case WifiStatus::NotConfigured: break;
+    case WifiStatus::Connecting: wifiColor = kColorAmber; wifiMark = "…"; break;
+    case WifiStatus::Failed: wifiColor = kColorRed; wifiMark = "×"; break;
+    case WifiStatus::Connected:
+      wifiColor = kColorGreen;
+      wifiMark = state.wifiBars < 0 ? "?" : "○";
+      break;
+  }
+  for (int bar = 0; bar < 4; ++bar) {
+    const int height = 5 * (bar + 1);
+    const bool filled = state.wifi == WifiStatus::Connected && bar < state.wifiBars;
+    frame().fillRect(left + 8 + bar * 8, top + 23 - height, 5, height,
+                     filled ? wifiColor : kColorDisabled);
+  }
+  drawFittedText(wifiMark, {left + 40, top, 36, 24}, 22, 16, wifiColor);
+  drawFittedText("Wi-Fi", {left, top + 25, 80, 15}, 14, 12, kColorText);
+
+  uint32_t serverColor = kColorMutedText;
+  const char* serverMark = "−";
+  switch (state.server) {
+    case RpiStatus::Disabled: break;
+    case RpiStatus::Connecting: serverColor = kColorAmber; serverMark = "…"; break;
+    case RpiStatus::Connected: serverColor = kColorGreen; serverMark = "○"; break;
+    case RpiStatus::Unresponsive: serverColor = kColorRed; serverMark = "×"; break;
+  }
+  const Rect server = {left + 88, top + 1, 26, 23};
+  drawOutlinedRoundRect(server, 4, serverColor, background);
+  for (int row = 0; row < 2; ++row) {
+    frame().fillCircle(server.x + 6, server.y + 7 + row * 9, 2, serverColor);
+    frame().fillRect(server.x + 12, server.y + 6 + row * 9, 8, 2, serverColor);
+  }
+  drawFittedText(serverMark, {left + 120, top, 36, 24}, 22, 16, serverColor);
+  drawFittedText("サーバー", {left + 80, top + 25, 80, 15}, 14, 12, kColorText);
+}
+
 void beepAccepted() { play(acceptedChime); }
 
 void beepRejected() { play(rejectedChime); }

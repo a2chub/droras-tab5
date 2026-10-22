@@ -7,5 +7,7 @@ void runHeatListTests();
 void runHeatWindowTests();
 void runSocketIoCodecTests();
 void runServerAddressTests();
+void runServerHeartbeatTests();
 void runOrientationTests();
 void runGestureControlTests();
+void runWifiProfileTests();
